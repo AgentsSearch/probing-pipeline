@@ -1,0 +1,23 @@
+[
+  {
+    "query": "Find the current weather in London and format it as a markdown summary",
+    "expected_intent": "data_retrieval",
+    "expected_domain": "general",
+    "min_subtasks": 2,
+    "max_subtasks": 4
+  },
+  {
+    "query": "Translate the README.md file from English to Spanish",
+    "expected_intent": "content_creation",
+    "expected_domain": "translation",
+    "min_subtasks": 2,
+    "max_subtasks": 4
+  },
+  {
+    "query": "Search GitHub for Python repositories about machine learning and summarise the top 5 results",
+    "expected_intent": "data_retrieval",
+    "expected_domain": "software_engineering",
+    "min_subtasks": 3,
+    "max_subtasks": 5
+  }
+]

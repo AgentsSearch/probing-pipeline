@@ -1,0 +1,172 @@
+[
+  {
+    "server_id": "weather-server",
+    "mcp_server_url": "http://localhost:8001",
+    "tools": [
+      {
+        "tool_name": "get_current_weather",
+        "description": "Get the current weather conditions for a given city including temperature, humidity, and wind speed",
+        "capability_tags": ["weather", "api_call", "data_retrieval"],
+        "parameter_schema": {
+          "type": "object",
+          "required": ["city"],
+          "properties": {
+            "city": {"type": "string", "description": "City name"},
+            "units": {"type": "string", "enum": ["celsius", "fahrenheit"], "description": "Temperature units"}
+          }
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "temperature": {"type": "number"},
+            "humidity": {"type": "number"},
+            "wind_speed": {"type": "number"},
+            "condition": {"type": "string"}
+          }
+        },
+        "complexity_estimate": 0.2
+      },
+      {
+        "tool_name": "get_forecast",
+        "description": "Get a multi-day weather forecast for a given city",
+        "capability_tags": ["weather", "api_call", "data_retrieval"],
+        "parameter_schema": {
+          "type": "object",
+          "required": ["city", "days"],
+          "properties": {
+            "city": {"type": "string"},
+            "days": {"type": "integer", "minimum": 1, "maximum": 14}
+          }
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "forecast": {"type": "array"}
+          }
+        },
+        "complexity_estimate": 0.3
+      }
+    ]
+  },
+  {
+    "server_id": "github-server",
+    "mcp_server_url": "http://localhost:8002",
+    "tools": [
+      {
+        "tool_name": "search_repositories",
+        "description": "Search GitHub repositories by query string with sorting and filtering options",
+        "capability_tags": ["github", "search", "api_call"],
+        "parameter_schema": {
+          "type": "object",
+          "required": ["query"],
+          "properties": {
+            "query": {"type": "string"},
+            "sort": {"type": "string", "enum": ["stars", "forks", "updated"]},
+            "language": {"type": "string"},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+          }
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "repositories": {"type": "array"}
+          }
+        },
+        "complexity_estimate": 0.4
+      },
+      {
+        "tool_name": "get_repository_details",
+        "description": "Get detailed information about a specific GitHub repository including README, stats, and recent activity",
+        "capability_tags": ["github", "api_call", "data_retrieval"],
+        "parameter_schema": {
+          "type": "object",
+          "required": ["owner", "repo"],
+          "properties": {
+            "owner": {"type": "string"},
+            "repo": {"type": "string"}
+          }
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"},
+            "description": {"type": "string"},
+            "stars": {"type": "integer"},
+            "readme": {"type": "string"}
+          }
+        },
+        "complexity_estimate": 0.3
+      },
+      {
+        "tool_name": "read_file",
+        "description": "Read the contents of a file from a GitHub repository",
+        "capability_tags": ["github", "file_read"],
+        "parameter_schema": {
+          "type": "object",
+          "required": ["owner", "repo", "path"],
+          "properties": {
+            "owner": {"type": "string"},
+            "repo": {"type": "string"},
+            "path": {"type": "string"}
+          }
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "content": {"type": "string"},
+            "encoding": {"type": "string"}
+          }
+        },
+        "complexity_estimate": 0.2
+      }
+    ]
+  },
+  {
+    "server_id": "translation-server",
+    "mcp_server_url": "http://localhost:8003",
+    "tools": [
+      {
+        "tool_name": "translate_text",
+        "description": "Translate text from one language to another using neural machine translation",
+        "capability_tags": ["translation", "nlp", "text_processing"],
+        "parameter_schema": {
+          "type": "object",
+          "required": ["text", "source_lang", "target_lang"],
+          "properties": {
+            "text": {"type": "string"},
+            "source_lang": {"type": "string"},
+            "target_lang": {"type": "string"}
+          }
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "translated_text": {"type": "string"},
+            "confidence": {"type": "number"}
+          }
+        },
+        "complexity_estimate": 0.5
+      },
+      {
+        "tool_name": "detect_language",
+        "description": "Detect the language of a given text",
+        "capability_tags": ["translation", "nlp", "detection"],
+        "parameter_schema": {
+          "type": "object",
+          "required": ["text"],
+          "properties": {
+            "text": {"type": "string"}
+          }
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "language": {"type": "string"},
+            "confidence": {"type": "number"}
+          }
+        },
+        "complexity_estimate": 0.2
+      }
+    ]
+  }
+]
