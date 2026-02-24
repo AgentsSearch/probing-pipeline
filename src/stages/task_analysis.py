@@ -41,6 +41,8 @@ def _parse_task_dag(query: str, data: dict[str, Any]) -> TaskDAG:
         ValueError: If the data is malformed or fails validation.
     """
     nodes_raw = data.get("nodes", [])
+    if not isinstance(nodes_raw, list):
+        raise ValueError(f"Expected 'nodes' to be a list, got {type(nodes_raw).__name__}")
 
     # Enforce max node count by merging lowest-difficulty surplus nodes
     if len(nodes_raw) > _MAX_NODES:
