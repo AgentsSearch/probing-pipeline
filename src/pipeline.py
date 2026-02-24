@@ -12,6 +12,7 @@ Flow:
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -60,6 +61,7 @@ class AgentPipelineResult:
     estimate: PosteriorEstimate | None = None
     error_code: str | None = None
     error_detail: str | None = None
+    timings: dict[str, float] = field(default_factory=dict)  # stage -> seconds
 
 
 @dataclass
@@ -95,6 +97,37 @@ class ProbePipeline:
         self.template_library = template_library
         self.config = config or PipelineConfig()
 
+    def run_stage_1(self, query: str) -> tuple[TaskDAG | None, float]:
+        """Run Stage 1: Task Analysis.
+
+        Args:
+            query: The user query string.
+
+        Returns:
+            Tuple of (TaskDAG or None on failure, elapsed seconds).
+        """
+        t0 = time.monotonic()
+        try:
+            dag = analyse_task(query, self.llm)
+        except Exception as e:
+            logger.error("Stage 1 failed: %s", e)
+            return None, time.monotonic() - t0
+        return dag, time.monotonic() - t0
+
+    def run_stages_2_to_4_for_agent(
+        self, dag: TaskDAG, agent: CandidateAgent
+    ) -> AgentPipelineResult:
+        """Run Stages 2-4 for a single agent with per-stage timing.
+
+        Args:
+            dag: TaskDAG from Stage 1.
+            agent: The candidate agent to evaluate.
+
+        Returns:
+            AgentPipelineResult with timings populated.
+        """
+        return self._process_agent(dag, agent)
+
     def run_stages_1_to_4(
         self, retrieval_result: RetrievalResult
     ) -> tuple[TaskDAG | None, list[AgentPipelineResult]]:
@@ -110,15 +143,13 @@ class ProbePipeline:
         query = retrieval_result.query
 
         # Stage 1: Task Analysis (shared across all agents)
-        try:
-            dag = analyse_task(query, self.llm)
-        except Exception as e:
-            logger.error("Stage 1 failed: %s", e)
+        dag, _ = self.run_stage_1(query)
+        if dag is None:
             results = [
                 AgentPipelineResult(
                     agent=agent,
                     error_code=TASK_ANALYSIS_FAILED,
-                    error_detail=str(e),
+                    error_detail="Task analysis failed",
                 )
                 for agent in retrieval_result.candidates
             ]
@@ -135,10 +166,11 @@ class ProbePipeline:
     def _process_agent(
         self, dag: TaskDAG, agent: CandidateAgent
     ) -> AgentPipelineResult:
-        """Run Stages 2-4 for a single agent."""
+        """Run Stages 2-4 for a single agent with per-stage timing."""
         result = AgentPipelineResult(agent=agent)
 
         # Stage 2: Tool-Task Alignment
+        t0 = time.monotonic()
         try:
             result.alignment = align_tools_for_agent(
                 dag, agent.agent_id, self.retriever, self.llm
@@ -147,9 +179,12 @@ class ProbePipeline:
             logger.error("Stage 2 failed for %s: %s", agent.agent_id, e)
             result.error_code = ALIGNMENT_FAILED
             result.error_detail = str(e)
+            result.timings["stage_2_alignment"] = time.monotonic() - t0
             return result
+        result.timings["stage_2_alignment"] = time.monotonic() - t0
 
         # Stage 3: Probe Generation
+        t0 = time.monotonic()
         try:
             result.probe_plan = generate_probe_plan(
                 query=dag.query,
@@ -164,9 +199,12 @@ class ProbePipeline:
             logger.error("Stage 3 failed for %s: %s", agent.agent_id, e)
             result.error_code = PROBE_GENERATION_FAILED
             result.error_detail = str(e)
+            result.timings["stage_3_generation"] = time.monotonic() - t0
             return result
+        result.timings["stage_3_generation"] = time.monotonic() - t0
 
         # Stage 4: Probe Validation
+        t0 = time.monotonic()
         try:
             validated, _validation_results = validate_plan(
                 result.probe_plan,
@@ -178,7 +216,9 @@ class ProbePipeline:
             logger.error("Stage 4 failed for %s: %s", agent.agent_id, e)
             result.error_code = PROBE_VALIDATION_FAILED
             result.error_detail = str(e)
+            result.timings["stage_4_validation"] = time.monotonic() - t0
             return result
+        result.timings["stage_4_validation"] = time.monotonic() - t0
 
         return result
 

@@ -22,6 +22,7 @@ import logging
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -37,18 +38,28 @@ from src.pipeline import ProbePipeline, PipelineConfig
 from src.tool_index.indexer import ToolIndexer, ToolRecord
 from src.tool_index.retriever import ToolRetriever
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    datefmt="%H:%M:%S",
-)
-logger = logging.getLogger(__name__)
+# Suppress noisy library logs, keep only our pipeline logs
+logging.basicConfig(level=logging.WARNING, format="%(message)s")
+logger = logging.getLogger("pipeline_runner")
+logger.setLevel(logging.INFO)
 
 FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 
 
-def build_index(servers_path: str | Path) -> str:
-    """Build a FAISS index from MCP server definitions and return the temp dir."""
+def _fmt_time(seconds: float) -> str:
+    """Format seconds as a human-readable duration."""
+    if seconds < 1.0:
+        return f"{seconds * 1000:.0f}ms"
+    return f"{seconds:.2f}s"
+
+
+def _log_step(label: str, detail: str, elapsed: float) -> None:
+    """Print a one-liner step log."""
+    print(f"  [{_fmt_time(elapsed):>7}] {label}: {detail}")
+
+
+def build_index(servers_path: str | Path) -> tuple[str, int]:
+    """Build a FAISS index from MCP server definitions. Returns (index_dir, tool_count)."""
     with open(servers_path) as f:
         servers = json.load(f)
 
@@ -69,19 +80,13 @@ def build_index(servers_path: str | Path) -> str:
             ])
 
     indexer.build_index()
-
     index_dir = tempfile.mkdtemp(prefix="probe_index_")
     indexer.save(index_dir)
-    logger.info("Built FAISS index at %s (%d tools)", index_dir, len(indexer.tools))
-    return index_dir
+    return index_dir, len(indexer.tools)
 
 
 def simulate_execution(plan, server_url: str) -> list[ProbeExecutionResult]:
-    """Simulate probe execution (placeholder for Stream C integration).
-
-    In production, this would send probes to the MCP sandbox.
-    For now, simulates successful execution with dummy output.
-    """
+    """Simulate probe execution (placeholder for Stream C integration)."""
     results = []
     for probe in plan.probes:
         results.append(
@@ -119,6 +124,8 @@ def main():
     )
     args = parser.parse_args()
 
+    pipeline_start = time.monotonic()
+
     # --- API Key ---
     api_key = os.environ.get(args.api_key_env)
     if not api_key:
@@ -126,116 +133,167 @@ def main():
         print(f"  export {args.api_key_env}=your_key_here\n")
         sys.exit(1)
 
+    # --- Header ---
+    print(f"\n{'='*60}")
+    print("PROBING PIPELINE")
+    print(f"{'='*60}")
+    print(f"  Query:  {args.query}")
+
     # --- LLM Client ---
     llm = LLMClient.from_config(api_key=api_key)
     if args.base_url:
         llm.base_url = args.base_url
-        llm.__post_init__()  # Re-create the OpenAI client
+        llm.__post_init__()
     if args.model:
         llm.model = args.model
 
+    print(f"  Model:  {llm.model}")
+    print(f"  Budget: {args.budget} probes/agent")
+
     # --- Build FAISS Index ---
-    print(f"\n{'='*60}")
-    print("PROBING PIPELINE")
-    print(f"{'='*60}")
-    print(f"\nQuery: {args.query}")
-    print(f"Model: {llm.model}")
-    print(f"Budget: {args.budget} probes/agent\n")
+    print(f"\n{'─'*60}")
+    print("SETUP")
+    print(f"{'─'*60}")
 
-    index_dir = build_index(args.servers)
+    t0 = time.monotonic()
+    index_dir, tool_count = build_index(args.servers)
     retriever = ToolRetriever(index_dir)
+    _log_step("FAISS index", f"{tool_count} tools indexed", time.monotonic() - t0)
 
-    # --- Build Candidate Agents from servers ---
+    # --- Build Candidate Agents ---
     with open(args.servers) as f:
         servers = json.load(f)
 
     candidates = [
         CandidateAgent(
             agent_id=s["server_id"],
-            retrieval_score=0.7,  # placeholder
+            retrieval_score=0.7,
             mcp_server_url=s["mcp_server_url"],
         )
         for s in servers
     ]
+    print(f"  [      ] Candidates: {', '.join(c.agent_id for c in candidates)}")
 
-    retrieval_result = RetrievalResult(query=args.query, candidates=candidates)
-
-    # --- Run Pipeline Stages 1-4 ---
     pipeline = ProbePipeline(
         llm=llm,
         retriever=retriever,
         config=PipelineConfig(probe_budget=args.budget),
     )
 
-    print(f"{'─'*60}")
+    # ─── Stage 1: Task Analysis ───
+    print(f"\n{'─'*60}")
     print("STAGE 1: Task Analysis")
     print(f"{'─'*60}")
-    dag, agent_results = pipeline.run_stages_1_to_4(retrieval_result)
 
-    if dag:
-        print(f"  Intent: {dag.intent}")
-        print(f"  Domain: {dag.domain}")
-        print(f"  Subtasks: {len(dag.nodes)}")
-        for node in dag.nodes:
-            disc = " [DISCRIMINATIVE]" if node.is_discriminative else ""
-            print(f"    {node.id}: {node.description} (d={node.difficulty:.2f}){disc}")
-        print(f"  Critical path: {dag.critical_path}")
-        print(f"  Difficulty: {dag.estimated_difficulty:.2f}")
-    else:
-        print("  FAILED — see logs")
+    dag, stage1_time = pipeline.run_stage_1(args.query)
+
+    if dag is None:
+        _log_step("FAILED", "Could not decompose query", stage1_time)
         sys.exit(1)
 
-    # --- Per-Agent Results ---
+    _log_step("Decomposed", f"{len(dag.nodes)} subtasks, difficulty={dag.estimated_difficulty:.2f}", stage1_time)
+    for node in dag.nodes:
+        disc = " *" if node.is_discriminative else ""
+        print(f"           {node.id}: {node.description} (d={node.difficulty:.2f}){disc}")
+    print(f"           Critical path: {' -> '.join(dag.critical_path)}")
+
+    # ─── Stages 2-4 + Execution + Scoring per agent ───
     rankings = []
-    for result in agent_results:
-        agent = result.agent
+
+    for agent in candidates:
         print(f"\n{'─'*60}")
         print(f"AGENT: {agent.agent_id}")
         print(f"{'─'*60}")
 
-        if result.error_code:
-            print(f"  Error: {result.error_code} — {result.error_detail}")
+        # Stage 2: Alignment
+        result = pipeline.run_stages_2_to_4_for_agent(dag, agent)
+
+        t_align = result.timings.get("stage_2_alignment", 0)
+        if result.alignment:
+            matched = len(result.alignment.alignments)
+            _log_step(
+                "Stage 2",
+                f"coverage={result.alignment.coverage_score:.2f}, "
+                f"{matched} alignments, {len(result.alignment.unmatched_subtasks)} unmatched",
+                t_align,
+            )
+        elif result.error_code:
+            _log_step("Stage 2", f"FAILED — {result.error_code}", t_align)
             ranked = pipeline.score_agent_results(result, [])
             rankings.append(ranked)
             continue
 
-        if result.alignment:
-            print(f"  Coverage: {result.alignment.coverage_score:.2f}")
-            print(f"  Tools evaluated: {result.alignment.tools_evaluated}")
-            print(f"  Unmatched subtasks: {result.alignment.unmatched_subtasks}")
+        # Stage 3: Probe Generation
+        t_gen = result.timings.get("stage_3_generation", 0)
+        if result.probe_plan:
+            n_probes = len(result.probe_plan.probes)
+            tools_used = ", ".join(p.tool for p in result.probe_plan.probes) or "none"
+            _log_step("Stage 3", f"{n_probes} probes generated ({tools_used})", t_gen)
+        elif result.error_code:
+            _log_step("Stage 3", f"FAILED — {result.error_code}", t_gen)
+            ranked = pipeline.score_agent_results(result, [])
+            rankings.append(ranked)
+            continue
 
+        # Stage 4: Validation
+        t_val = result.timings.get("stage_4_validation", 0)
         if result.validated_plan:
-            print(f"  Probes: {len(result.validated_plan.probes)}")
+            valid_count = len(result.validated_plan.probes)
+            orig_count = len(result.probe_plan.probes) if result.probe_plan else 0
+            _log_step("Stage 4", f"{valid_count}/{orig_count} probes passed validation", t_val)
             for probe in result.validated_plan.probes:
-                print(f"    {probe.probe_id}: {probe.tool} (d={probe.estimated_difficulty:.2f}, "
-                      f"a={probe.discrimination:.2f}) [{probe.priority}]")
+                print(f"           {probe.probe_id}: {probe.tool} "
+                      f"(d={probe.estimated_difficulty:.2f}, a={probe.discrimination:.2f}) "
+                      f"[{probe.priority}]")
+        elif result.error_code:
+            _log_step("Stage 4", f"FAILED — {result.error_code}", t_val)
+            ranked = pipeline.score_agent_results(result, [])
+            rankings.append(ranked)
+            continue
 
-        # --- Execution ---
-        if args.simulate_execution and result.validated_plan:
+        # Execution (simulated)
+        t0 = time.monotonic()
+        if args.simulate_execution and result.validated_plan and result.validated_plan.probes:
             exec_results = simulate_execution(result.validated_plan, agent.mcp_server_url)
-            print(f"  Execution: {len(exec_results)} probes simulated")
+            _log_step("Execution", f"{len(exec_results)} probes executed (simulated)", time.monotonic() - t0)
         else:
             exec_results = []
+            _log_step("Execution", "skipped (no valid probes)", time.monotonic() - t0)
 
+        # Scoring
+        t0 = time.monotonic()
         ranked = pipeline.score_agent_results(result, exec_results)
+        _log_step(
+            "Scoring",
+            f"theta={ranked.theta:.3f}, sigma={ranked.sigma:.3f}, "
+            f"confidence={ranked.confidence:.3f}, tier={ranked.testability_tier}",
+            time.monotonic() - t0,
+        )
         rankings.append(ranked)
 
-    # --- Final Rankings ---
+    # ─── Final Rankings ───
     rankings.sort(key=lambda r: r.theta, reverse=True)
+    total_time = time.monotonic() - pipeline_start
 
     print(f"\n{'='*60}")
     print("FINAL RANKINGS")
     print(f"{'='*60}\n")
-    print(f"{'Rank':<5} {'Agent':<25} {'Score':<8} {'±σ':<8} {'Conf':<8} {'Tier':<18} {'Summary'}")
-    print(f"{'─'*100}")
+    print(f"  {'Rank':<5} {'Agent':<25} {'Score':<8} {'+/-':<8} {'Conf':<8} {'Tier':<18} {'Probes'}")
+    print(f"  {'─'*90}")
 
     for i, r in enumerate(rankings, 1):
-        print(f"{i:<5} {r.agent_id:<25} {r.theta:<8.3f} {r.sigma:<8.3f} "
+        print(f"  {i:<5} {r.agent_id:<25} {r.theta:<8.3f} {r.sigma:<8.3f} "
               f"{r.confidence:<8.3f} {r.testability_tier:<18} {r.probe_summary}")
 
-    # --- Token Usage ---
+    # ─── Summary ───
     tokens = llm.total_tokens()
-    print(f"\nToken usage: {tokens['input']} input + {tokens['output']} output = {tokens['total']} total")
+    print(f"\n{'─'*60}")
+    print("SUMMARY")
+    print(f"{'─'*60}")
+    print(f"  Total time:    {_fmt_time(total_time)}")
+    print(f"  Agents ranked: {len(rankings)}")
+    print(f"  LLM calls:     {len(llm.call_log)}")
+    print(f"  Token usage:   {tokens['input']:,} in + {tokens['output']:,} out = {tokens['total']:,} total")
     print()
 
 
