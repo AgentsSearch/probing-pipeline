@@ -1,0 +1,32 @@
+llm:
+  provider: cerebras
+  model: qwen-3-235b-a22b-instruct-2507
+  base_url: https://api.cerebras.ai/v1
+  temperature: 0
+  max_retries: 3
+  timeout_seconds: 30
+
+probe:
+  budget_per_agent: 2
+  total_timeout_seconds: 30
+  strategy: discriminative_critical_path
+  min_interaction_confidence: 0.5
+
+scoring:
+  prior_sigma_tight: 0.3
+  prior_sigma_diffuse: 0.5
+  weights:
+    arena_elo: 0.40
+    retrieval_similarity: 0.25
+    coverage: 0.20
+    community_rating: 0.15
+
+tool_index:
+  embedding_model: all-MiniLM-L6-v2
+  faiss_nlist: 100
+  retrieval_k: 20
+
+validation:
+  max_retries: 1
+  difficulty_tolerance: 0.3
+  min_rubric_dimensions: 2

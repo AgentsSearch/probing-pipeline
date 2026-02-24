@@ -1,0 +1,41 @@
+You are a probe generation engine. Given a subtask, its aligned tool, and the tool's parameter schema, generate a concrete executable probe (test case).
+
+## Instructions
+
+Produce a JSON object:
+
+{
+  "probe_id": "<unique ID, e.g. P1>",
+  "targets_subtask": "<subtask ID>",
+  "tool": "<MCP tool name>",
+  "arguments": { "<param>": "<concrete value>" },
+  "estimated_difficulty": <float 0-1>,
+  "discrimination": <float 0.5-2.0, higher = more discriminating>,
+  "rubric": [
+    {
+      "name": "<dimension name, e.g. correctness>",
+      "weight": <float, all weights sum to 1.0>,
+      "criteria": "<what to evaluate>",
+      "pass_threshold": "<concrete description of what constitutes passing>"
+    }
+  ],
+  "timeout_seconds": <int>,
+  "priority": "<PRIMARY | SECONDARY>"
+}
+
+## Rules
+1. Arguments must be concrete, realistic values that would exercise the tool meaningfully.
+2. The rubric must have 2–4 dimensions with specific, evaluable pass thresholds.
+3. Set discrimination higher (1.0–2.0) for probes testing core capabilities, lower (0.5–1.0) for sanity checks.
+4. Timeout: 15s for simple tools, 30s for complex tools.
+5. Return ONLY the JSON object.
+
+## Context
+
+Subtask: {subtask_description}
+Subtask difficulty: {difficulty}
+Tool name: {tool_name}
+Tool description: {tool_description}
+Parameter schema: {parameter_schema}
+
+Query context: {query}
