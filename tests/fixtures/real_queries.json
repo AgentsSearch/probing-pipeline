@@ -1,0 +1,366 @@
+[
+  {
+    "id": "github_repo_search",
+    "query": "Find Python machine learning repositories with more than 1000 stars on GitHub and show me the README of the top result",
+    "expected_intent": "data_retrieval",
+    "expected_domain": "software_engineering",
+    "min_subtasks": 2,
+    "max_subtasks": 4,
+    "description": "Single-agent clear match — GitHub server has direct tools for search + file read",
+    "best_candidate": "server-github",
+    "relevant_tools": ["search_repositories", "get_file_contents"],
+    "candidates": [
+      {
+        "agent_id": "server-github",
+        "retrieval_score": 0.92,
+        "mcp_server_url": "npx -y @modelcontextprotocol/server-github",
+        "arena_elo": 1450,
+        "community_rating": 4.5
+      },
+      {
+        "agent_id": "server-brave-search",
+        "retrieval_score": 0.61,
+        "mcp_server_url": "npx -y @modelcontextprotocol/server-brave-search",
+        "arena_elo": 1350,
+        "community_rating": 4.0
+      },
+      {
+        "agent_id": "server-fetch",
+        "retrieval_score": 0.38,
+        "mcp_server_url": "uvx mcp-server-fetch",
+        "arena_elo": null,
+        "community_rating": 3.5
+      }
+    ],
+    "expected_mock_responses": {
+      "task_analysis": {
+        "query": "Find Python machine learning repositories with more than 1000 stars on GitHub and show me the README of the top result",
+        "intent": "data_retrieval",
+        "domain": "software_engineering",
+        "nodes": [
+          {
+            "id": "S1",
+            "description": "Search GitHub for Python machine learning repositories sorted by stars",
+            "capability": "search",
+            "difficulty": 0.3,
+            "is_discriminative": true,
+            "depends_on": []
+          },
+          {
+            "id": "S2",
+            "description": "Filter results to repositories with more than 1000 stars",
+            "capability": "data_filtering",
+            "difficulty": 0.2,
+            "is_discriminative": false,
+            "depends_on": ["S1"]
+          },
+          {
+            "id": "S3",
+            "description": "Retrieve the README file contents from the top repository",
+            "capability": "file_read",
+            "difficulty": 0.25,
+            "is_discriminative": true,
+            "depends_on": ["S2"]
+          }
+        ],
+        "edges": [["S1", "S2"], ["S2", "S3"]],
+        "critical_path": ["S1", "S2", "S3"],
+        "estimated_difficulty": 0.3,
+        "evaluation_dimensions": ["correctness", "completeness", "relevance"]
+      }
+    }
+  },
+  {
+    "id": "web_search_save",
+    "query": "Search the web for the latest news about AI regulation in the EU and save a summary to a markdown file",
+    "expected_intent": "data_retrieval",
+    "expected_domain": "research",
+    "min_subtasks": 3,
+    "max_subtasks": 5,
+    "description": "Multi-agent ranking — brave-search for web search, filesystem for saving. Tests cross-server capability.",
+    "best_candidate": "server-brave-search",
+    "relevant_tools": ["brave_web_search", "write_file"],
+    "candidates": [
+      {
+        "agent_id": "server-brave-search",
+        "retrieval_score": 0.88,
+        "mcp_server_url": "npx -y @modelcontextprotocol/server-brave-search",
+        "arena_elo": 1350,
+        "community_rating": 4.0
+      },
+      {
+        "agent_id": "server-filesystem",
+        "retrieval_score": 0.42,
+        "mcp_server_url": "npx -y @modelcontextprotocol/server-filesystem /tmp",
+        "arena_elo": null,
+        "community_rating": 4.1
+      },
+      {
+        "agent_id": "server-fetch",
+        "retrieval_score": 0.55,
+        "mcp_server_url": "uvx mcp-server-fetch",
+        "arena_elo": null,
+        "community_rating": 3.5
+      }
+    ],
+    "expected_mock_responses": {
+      "task_analysis": {
+        "query": "Search the web for the latest news about AI regulation in the EU and save a summary to a markdown file",
+        "intent": "data_retrieval",
+        "domain": "research",
+        "nodes": [
+          {
+            "id": "S1",
+            "description": "Search the web for recent news articles about AI regulation in the European Union",
+            "capability": "web_search",
+            "difficulty": 0.3,
+            "is_discriminative": true,
+            "depends_on": []
+          },
+          {
+            "id": "S2",
+            "description": "Extract and synthesise key points from the search results into a coherent summary",
+            "capability": "text_processing",
+            "difficulty": 0.5,
+            "is_discriminative": true,
+            "depends_on": ["S1"]
+          },
+          {
+            "id": "S3",
+            "description": "Format the summary as markdown with headings, bullet points, and source links",
+            "capability": "text_formatting",
+            "difficulty": 0.2,
+            "is_discriminative": false,
+            "depends_on": ["S2"]
+          },
+          {
+            "id": "S4",
+            "description": "Write the markdown summary to a file on disk",
+            "capability": "file_write",
+            "difficulty": 0.15,
+            "is_discriminative": true,
+            "depends_on": ["S3"]
+          }
+        ],
+        "edges": [["S1", "S2"], ["S2", "S3"], ["S3", "S4"]],
+        "critical_path": ["S1", "S2", "S3", "S4"],
+        "estimated_difficulty": 0.4,
+        "evaluation_dimensions": ["relevance", "recency", "completeness", "formatting"]
+      }
+    }
+  },
+  {
+    "id": "database_introspection",
+    "query": "List all tables in the database and show me the schema of the users table, then count the total number of active users",
+    "expected_intent": "data_retrieval",
+    "expected_domain": "data_engineering",
+    "min_subtasks": 3,
+    "max_subtasks": 4,
+    "description": "Single-agent, progressive difficulty — sqlite server has all needed tools, tests multiple tool chaining",
+    "best_candidate": "server-sqlite",
+    "relevant_tools": ["list_tables", "describe_table", "read_query"],
+    "candidates": [
+      {
+        "agent_id": "server-sqlite",
+        "retrieval_score": 0.95,
+        "mcp_server_url": "uvx mcp-server-sqlite --db-path /tmp/test.db",
+        "arena_elo": 1380,
+        "community_rating": 4.3
+      },
+      {
+        "agent_id": "server-github",
+        "retrieval_score": 0.25,
+        "mcp_server_url": "npx -y @modelcontextprotocol/server-github",
+        "arena_elo": 1450,
+        "community_rating": 4.5
+      }
+    ],
+    "expected_mock_responses": {
+      "task_analysis": {
+        "query": "List all tables in the database and show me the schema of the users table, then count the total number of active users",
+        "intent": "data_retrieval",
+        "domain": "data_engineering",
+        "nodes": [
+          {
+            "id": "S1",
+            "description": "List all available tables in the SQLite database",
+            "capability": "database_introspection",
+            "difficulty": 0.1,
+            "is_discriminative": false,
+            "depends_on": []
+          },
+          {
+            "id": "S2",
+            "description": "Retrieve the schema definition of the users table including column names, types, and constraints",
+            "capability": "schema_inspection",
+            "difficulty": 0.2,
+            "is_discriminative": true,
+            "depends_on": ["S1"]
+          },
+          {
+            "id": "S3",
+            "description": "Execute a SQL query to count active users in the users table",
+            "capability": "sql_query",
+            "difficulty": 0.4,
+            "is_discriminative": true,
+            "depends_on": ["S2"]
+          }
+        ],
+        "edges": [["S1", "S2"], ["S2", "S3"]],
+        "critical_path": ["S1", "S2", "S3"],
+        "estimated_difficulty": 0.35,
+        "evaluation_dimensions": ["correctness", "completeness", "query_validity"]
+      }
+    }
+  },
+  {
+    "id": "web_scraping",
+    "query": "Navigate to a product page, take a screenshot, extract the price and title, then save the data as a JSON file",
+    "expected_intent": "data_extraction",
+    "expected_domain": "web_scraping",
+    "min_subtasks": 3,
+    "max_subtasks": 5,
+    "description": "Multi-tool complex task — puppeteer for browsing, filesystem for saving. High difficulty tests discrimination.",
+    "best_candidate": "server-puppeteer",
+    "relevant_tools": ["puppeteer_navigate", "puppeteer_screenshot", "puppeteer_evaluate", "write_file"],
+    "candidates": [
+      {
+        "agent_id": "server-puppeteer",
+        "retrieval_score": 0.90,
+        "mcp_server_url": "npx -y @modelcontextprotocol/server-puppeteer",
+        "arena_elo": 1320,
+        "community_rating": 3.8
+      },
+      {
+        "agent_id": "server-fetch",
+        "retrieval_score": 0.60,
+        "mcp_server_url": "uvx mcp-server-fetch",
+        "arena_elo": null,
+        "community_rating": 3.5
+      },
+      {
+        "agent_id": "server-filesystem",
+        "retrieval_score": 0.35,
+        "mcp_server_url": "npx -y @modelcontextprotocol/server-filesystem /tmp",
+        "arena_elo": null,
+        "community_rating": 4.1
+      }
+    ],
+    "expected_mock_responses": {
+      "task_analysis": {
+        "query": "Navigate to a product page, take a screenshot, extract the price and title, then save the data as a JSON file",
+        "intent": "data_extraction",
+        "domain": "web_scraping",
+        "nodes": [
+          {
+            "id": "S1",
+            "description": "Navigate the browser to the target product page URL",
+            "capability": "web_navigation",
+            "difficulty": 0.2,
+            "is_discriminative": true,
+            "depends_on": []
+          },
+          {
+            "id": "S2",
+            "description": "Take a screenshot of the rendered product page",
+            "capability": "visual_capture",
+            "difficulty": 0.35,
+            "is_discriminative": true,
+            "depends_on": ["S1"]
+          },
+          {
+            "id": "S3",
+            "description": "Execute JavaScript to extract the product title and price from the page DOM",
+            "capability": "dom_extraction",
+            "difficulty": 0.6,
+            "is_discriminative": true,
+            "depends_on": ["S1"]
+          },
+          {
+            "id": "S4",
+            "description": "Save the extracted data as a structured JSON file",
+            "capability": "file_write",
+            "difficulty": 0.15,
+            "is_discriminative": false,
+            "depends_on": ["S3"]
+          }
+        ],
+        "edges": [["S1", "S2"], ["S1", "S3"], ["S3", "S4"]],
+        "critical_path": ["S1", "S3", "S4"],
+        "estimated_difficulty": 0.5,
+        "evaluation_dimensions": ["navigation_success", "extraction_accuracy", "data_completeness"]
+      }
+    }
+  },
+  {
+    "id": "slack_notification",
+    "query": "Send a deployment notification to the #engineering Slack channel with a summary of the latest changes",
+    "expected_intent": "communication",
+    "expected_domain": "devops",
+    "min_subtasks": 2,
+    "max_subtasks": 4,
+    "description": "Negative/poor match test — slack is direct match, github is poor, filesystem is no match. Tests discrimination.",
+    "best_candidate": "server-slack",
+    "relevant_tools": ["slack_list_channels", "slack_post_message"],
+    "candidates": [
+      {
+        "agent_id": "server-slack",
+        "retrieval_score": 0.93,
+        "mcp_server_url": "npx -y @modelcontextprotocol/server-slack",
+        "arena_elo": 1400,
+        "community_rating": 4.2
+      },
+      {
+        "agent_id": "server-github",
+        "retrieval_score": 0.45,
+        "mcp_server_url": "npx -y @modelcontextprotocol/server-github",
+        "arena_elo": 1450,
+        "community_rating": 4.5
+      },
+      {
+        "agent_id": "server-filesystem",
+        "retrieval_score": 0.15,
+        "mcp_server_url": "npx -y @modelcontextprotocol/server-filesystem /tmp",
+        "arena_elo": null,
+        "community_rating": 4.1
+      }
+    ],
+    "expected_mock_responses": {
+      "task_analysis": {
+        "query": "Send a deployment notification to the #engineering Slack channel with a summary of the latest changes",
+        "intent": "communication",
+        "domain": "devops",
+        "nodes": [
+          {
+            "id": "S1",
+            "description": "Find the #engineering channel ID by listing available Slack channels",
+            "capability": "channel_discovery",
+            "difficulty": 0.15,
+            "is_discriminative": false,
+            "depends_on": []
+          },
+          {
+            "id": "S2",
+            "description": "Compose a deployment summary message with latest change details",
+            "capability": "text_generation",
+            "difficulty": 0.3,
+            "is_discriminative": false,
+            "depends_on": []
+          },
+          {
+            "id": "S3",
+            "description": "Post the deployment notification message to the #engineering channel",
+            "capability": "messaging",
+            "difficulty": 0.25,
+            "is_discriminative": true,
+            "depends_on": ["S1", "S2"]
+          }
+        ],
+        "edges": [["S1", "S3"], ["S2", "S3"]],
+        "critical_path": ["S1", "S3"],
+        "estimated_difficulty": 0.3,
+        "evaluation_dimensions": ["delivery_success", "message_content", "channel_targeting"]
+      }
+    }
+  }
+]

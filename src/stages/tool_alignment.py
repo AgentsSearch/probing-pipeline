@@ -40,6 +40,7 @@ def _load_prompt_template() -> str:
 
 def _build_rerank_prompt(
     template: str,
+    subtask_id: str,
     subtask_description: str,
     capability: str,
     candidates: list[ToolCandidate],
@@ -58,6 +59,7 @@ def _build_rerank_prompt(
 
     return (
         template
+        .replace("{subtask_id}", subtask_id)
         .replace("{subtask_description}", subtask_description)
         .replace("{capability}", capability)
         .replace("{tools_json}", json.dumps(tools_data, indent=2))
@@ -150,7 +152,7 @@ def align_tools_for_agent(
 
         # Phase B: LLM reranking
         prompt = _build_rerank_prompt(
-            template, node.description, node.capability, shortlist
+            template, node.id, node.description, node.capability, shortlist
         )
 
         try:
@@ -159,6 +161,11 @@ def align_tools_for_agent(
                 system="You are a tool-task alignment engine. Return only valid JSON.",
             )
             alignments = _parse_rerank_response(data, retrieval_scores)
+
+            # Force correct subtask ID — LLM may return descriptive
+            # strings instead of the node ID (e.g. "S1").
+            for a in alignments:
+                a.subtask_id = node.id
 
             # Filter out "none" matches
             valid = [a for a in alignments if a.match_type != "none"]

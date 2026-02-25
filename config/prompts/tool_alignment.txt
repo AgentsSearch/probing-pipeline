@@ -33,8 +33,11 @@ For each candidate tool, produce a JSON object:
 
 ## Context
 
+Subtask ID: {subtask_id}
 Subtask: {subtask_description}
 Required capability: {capability}
+
+IMPORTANT: Use exactly "{subtask_id}" as the "subtask_id" value in every alignment object.
 
 Candidate tools:
 {tools_json}
