@@ -206,8 +206,16 @@ class ProbePipeline:
         # Stage 4: Probe Validation
         t0 = time.monotonic()
         try:
+            # Build tool schema map from alignment data for schema-aware validation
+            tool_schemas = {
+                a.tool_name: a.tool_parameter_schema
+                for a in result.alignment.alignments
+                if a.tool_parameter_schema
+            } if result.alignment else {}
+
             validated, _validation_results = validate_plan(
                 result.probe_plan,
+                tool_schemas=tool_schemas,
                 difficulty_tolerance=self.config.difficulty_tolerance,
                 min_rubric_dimensions=self.config.min_rubric_dimensions,
             )

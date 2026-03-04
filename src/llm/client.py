@@ -54,6 +54,7 @@ class LLMClient:
     temperature: float = 0.0
     max_retries: int = 3
     timeout_seconds: int = 30
+    min_call_interval: float = 0.0  # seconds between calls (rate limit protection)
     call_log: list[LLMCallRecord] = field(default_factory=list, repr=False)
 
     def __post_init__(self) -> None:
@@ -62,6 +63,7 @@ class LLMClient:
             base_url=self.base_url,
             timeout=self.timeout_seconds,
         )
+        self._last_call_time: float = 0.0
 
     @classmethod
     def from_config(cls, api_key: str, config_path: str | Path | None = None) -> LLMClient:
@@ -82,6 +84,7 @@ class LLMClient:
             temperature=cfg.get("temperature", 0),
             max_retries=cfg.get("max_retries", 3),
             timeout_seconds=cfg.get("timeout_seconds", 30),
+            min_call_interval=cfg.get("min_call_interval", 0.0),
         )
 
     def complete(
@@ -106,6 +109,12 @@ class LLMClient:
         Raises:
             RuntimeError: If all retry attempts are exhausted.
         """
+        # Enforce minimum interval between calls (rate limit protection)
+        if self.min_call_interval > 0 and self._last_call_time > 0:
+            elapsed = time.monotonic() - self._last_call_time
+            if elapsed < self.min_call_interval:
+                time.sleep(self.min_call_interval - elapsed)
+
         messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -153,6 +162,7 @@ class LLMClient:
                 )
 
                 content = response.choices[0].message.content
+                self._last_call_time = time.monotonic()
                 return content or ""
 
             except Exception as e:
@@ -178,6 +188,7 @@ class LLMClient:
                     extra={"model": self.model, "prompt_hash": prompt_hash},
                 )
 
+                self._last_call_time = time.monotonic()
                 if attempt < self.max_retries:
                     backoff = 2 ** (attempt - 1)
                     time.sleep(backoff)

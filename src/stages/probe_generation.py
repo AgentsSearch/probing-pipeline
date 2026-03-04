@@ -85,6 +85,18 @@ def _select_subtasks(
                     selected.append((node, best))
                     break
 
+    # Fallback: if no discriminative subtask qualified, probe any subtask
+    # with a direct/partial match so the agent gets at least some evaluation
+    if not selected:
+        selected_ids: set[str] = set()
+        for node in dag.nodes:
+            best = alignment.best_alignment_for_subtask(node.id)
+            if best and best.match_type in ("direct", "partial"):
+                selected.append((node, best))
+                selected_ids.add(node.id)
+                if len(selected) >= budget:
+                    break
+
     return selected
 
 
@@ -123,8 +135,8 @@ def _probe_from_llm(
         .replace("{subtask_description}", node.description)
         .replace("{difficulty}", str(node.difficulty))
         .replace("{tool_name}", alignment.tool_name)
-        .replace("{tool_description}", f"Tool on server {alignment.server_id}")
-        .replace("{parameter_schema}", json.dumps(dict(alignment.parameter_mapping), default=str))
+        .replace("{tool_description}", alignment.tool_description or f"Tool on server {alignment.server_id}")
+        .replace("{parameter_schema}", json.dumps(alignment.tool_parameter_schema, indent=2) if alignment.tool_parameter_schema else json.dumps(dict(alignment.parameter_mapping), default=str))
         .replace("{query}", query)
     )
 
@@ -151,7 +163,7 @@ def _probe_from_llm(
         ]
 
     return Probe(
-        probe_id=data.get("probe_id", f"P{probe_index}"),
+        probe_id=f"P{probe_index}",
         targets_subtask=node.id,
         tool=alignment.tool_name,
         arguments=data.get("arguments", {}),
@@ -199,6 +211,7 @@ def generate_probe_plan(
         )
 
     probes: list[Probe] = []
+    seen_probes: set[str] = set()  # (tool_name, args_json) for dedup
     for i, (node, tool_align) in enumerate(selected, start=1):
         # Try template library first
         if template_library:
@@ -207,12 +220,23 @@ def generate_probe_plan(
                 logger.info(
                     "Template hit for %s (difficulty=%.2f)", tool_align.tool_name, node.difficulty
                 )
-                probes.append(_probe_from_template(tmpl, node, tool_align, query, i))
+                probe = _probe_from_template(tmpl, node, tool_align, query, i)
+                dedup_key = f"{probe.tool}:{json.dumps(probe.arguments, sort_keys=True)}"
+                if dedup_key in seen_probes:
+                    logger.info("Skipping duplicate probe for %s", probe.tool)
+                    continue
+                seen_probes.add(dedup_key)
+                probes.append(probe)
                 continue
 
         # Fall back to LLM generation
         try:
             probe = _probe_from_llm(node, tool_align, query, llm, i)
+            dedup_key = f"{probe.tool}:{json.dumps(probe.arguments, sort_keys=True)}"
+            if dedup_key in seen_probes:
+                logger.info("Skipping duplicate probe for %s", probe.tool)
+                continue
+            seen_probes.add(dedup_key)
             probes.append(probe)
         except Exception as e:
             logger.error("Failed to generate probe for subtask %s: %s", node.id, e)

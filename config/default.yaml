@@ -5,6 +5,7 @@ llm:
   temperature: 0
   max_retries: 3
   timeout_seconds: 30
+  min_call_interval: 2.0  # seconds between calls (Cerebras free tier: 30 RPM)
 
 probe:
   budget_per_agent: 2

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 
 @dataclass
@@ -27,6 +27,8 @@ class ToolAlignment:
     retrieval_score: float
     rerank_score: float
     parameter_mapping: dict[str, ParameterMap] = field(default_factory=dict)
+    tool_description: str = ""
+    tool_parameter_schema: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:

@@ -505,8 +505,8 @@
       },
       {
         "tool_name": "puppeteer_evaluate",
-        "description": "Execute JavaScript in the browser console",
-        "capability_tags": ["javascript_execution", "browser_automation", "scripting", "dom_manipulation"],
+        "description": "Execute JavaScript in the browser to interact with the DOM — extract text, attributes, prices, titles, or any page content via selectors",
+        "capability_tags": ["javascript_execution", "browser_automation", "scripting", "dom_manipulation", "data_extraction", "text_extraction", "web_scraping"],
         "parameter_schema": {
           "type": "object",
           "properties": {

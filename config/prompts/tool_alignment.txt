@@ -1,13 +1,13 @@
-You are a tool-task alignment engine. Given a subtask description and a list of candidate tools from an MCP server, assess how well each tool can fulfil the subtask.
+You are a tool-task alignment engine. Given a set of subtasks and a list of candidate tools from an MCP server, assess how well each tool can fulfil each subtask.
 
 ## Instructions
 
-For each candidate tool, produce a JSON object:
+For EACH subtask, evaluate EVERY candidate tool and produce alignment entries. Return a JSON object:
 
 {
   "alignments": [
     {
-      "subtask_id": "<subtask ID>",
+      "subtask_id": "<exact subtask ID, e.g. S1>",
       "tool_name": "<tool name>",
       "server_id": "<server ID>",
       "match_type": "<direct | partial | inferred | none>",
@@ -33,13 +33,12 @@ For each candidate tool, produce a JSON object:
 
 ## Context
 
-Subtask ID: {subtask_id}
-Subtask: {subtask_description}
-Required capability: {capability}
-
-IMPORTANT: Use exactly "{subtask_id}" as the "subtask_id" value in every alignment object.
+Subtasks to evaluate:
+{subtasks_json}
 
 Candidate tools:
 {tools_json}
+
+IMPORTANT: Use the exact subtask ID (e.g. "S1", "S2") from the subtasks list as the "subtask_id" in every alignment object. Evaluate each subtask against all candidate tools.
 
 Return ONLY the JSON object.

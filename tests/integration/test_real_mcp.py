@@ -87,7 +87,7 @@ def _make_alignment_response(
     match_type: str = "direct",
     confidence: float = 0.9,
 ) -> dict:
-    """Build a mock LLM alignment (reranker) response."""
+    """Build a mock LLM alignment (reranker) response with a single alignment."""
     return {
         "alignments": [
             {
@@ -99,6 +99,27 @@ def _make_alignment_response(
                 "rerank_score": confidence,
                 "parameter_mapping": {},
             }
+        ]
+    }
+
+
+def _make_batched_alignment_response(*alignments_args) -> dict:
+    """Build a mock batched alignment response with multiple alignments.
+
+    Each argument is a tuple of (subtask_id, tool_name, server_id, match_type, confidence).
+    """
+    return {
+        "alignments": [
+            {
+                "subtask_id": sid,
+                "tool_name": tname,
+                "server_id": srvid,
+                "match_type": mtype,
+                "confidence": conf,
+                "rerank_score": conf,
+                "parameter_mapping": {},
+            }
+            for sid, tname, srvid, mtype, conf in alignments_args
         ]
     }
 
@@ -223,7 +244,6 @@ class TestGitHubRepoSearch:
         """Full pipeline: GitHub agent should produce valid probe plan."""
         scenario = _get_query_by_id("github_repo_search")
         task_dag = scenario["expected_mock_responses"]["task_analysis"]
-        n_nodes = len(task_dag["nodes"])
 
         mock_llm = MagicMock()
         call_count = 0
@@ -233,8 +253,8 @@ class TestGitHubRepoSearch:
             call_count += 1
             if call_count == 1:
                 return task_dag
-            elif call_count <= 1 + n_nodes:
-                # Alignment call (one per DAG node)
+            elif call_count == 2:
+                # Single batched alignment call
                 return _make_alignment_response(
                     "S1", "search_repositories", "server-github", "direct", 0.95
                 )
@@ -275,7 +295,6 @@ class TestGitHubRepoSearch:
         """Scoring: GitHub agent with successful execution should score high."""
         scenario = _get_query_by_id("github_repo_search")
         task_dag = scenario["expected_mock_responses"]["task_analysis"]
-        n_nodes = len(task_dag["nodes"])
 
         mock_llm = MagicMock()
         call_count = 0
@@ -285,8 +304,8 @@ class TestGitHubRepoSearch:
             call_count += 1
             if call_count == 1:
                 return task_dag
-            elif call_count <= 1 + n_nodes:
-                # Alignment call (one per DAG node)
+            elif call_count == 2:
+                # Single batched alignment call
                 return _make_alignment_response(
                     "S1", "search_repositories", "server-github", "direct", 0.95
                 )
@@ -359,7 +378,6 @@ class TestWebSearchSave:
         """Brave search agent should produce valid probes for web search."""
         scenario = _get_query_by_id("web_search_save")
         task_dag = scenario["expected_mock_responses"]["task_analysis"]
-        n_nodes = len(task_dag["nodes"])
 
         mock_llm = MagicMock()
         call_count = 0
@@ -369,8 +387,8 @@ class TestWebSearchSave:
             call_count += 1
             if call_count == 1:
                 return task_dag
-            elif call_count <= 1 + n_nodes:
-                # Alignment call (one per DAG node)
+            elif call_count == 2:
+                # Single batched alignment call
                 return _make_alignment_response(
                     "S1", "brave_web_search", "server-brave-search", "direct", 0.92
                 )
@@ -400,7 +418,6 @@ class TestWebSearchSave:
         task_dag = scenario["expected_mock_responses"]["task_analysis"]
 
         # Run pipeline for brave-search (success) vs fetch (partial match)
-        n_nodes = len(task_dag["nodes"])
         mock_llm_brave = MagicMock()
         brave_call = 0
 
@@ -409,8 +426,8 @@ class TestWebSearchSave:
             brave_call += 1
             if brave_call == 1:
                 return task_dag
-            elif brave_call <= 1 + n_nodes:
-                # Alignment call (one per DAG node)
+            elif brave_call == 2:
+                # Single batched alignment call
                 return _make_alignment_response(
                     "S1", "brave_web_search", "server-brave-search", "direct", 0.92
                 )
@@ -447,8 +464,8 @@ class TestWebSearchSave:
             fetch_call += 1
             if fetch_call == 1:
                 return task_dag
-            elif fetch_call <= 1 + n_nodes:
-                # Alignment call (one per DAG node)
+            elif fetch_call == 2:
+                # Single batched alignment call
                 return _make_alignment_response(
                     "S1", "fetch", "server-fetch", "partial", 0.55
                 )
@@ -521,7 +538,6 @@ class TestDatabaseIntrospection:
         """Full pipeline: SQLite should produce probes for the hard subtask."""
         scenario = _get_query_by_id("database_introspection")
         task_dag = scenario["expected_mock_responses"]["task_analysis"]
-        n_nodes = len(task_dag["nodes"])
 
         mock_llm = MagicMock()
         call_count = 0
@@ -531,28 +547,16 @@ class TestDatabaseIntrospection:
             call_count += 1
             if call_count == 1:
                 return task_dag
-            elif call_count <= 1 + n_nodes:
-                # Alignment calls (one per DAG node: S1, S2, S3)
-                # Node index for this call
-                node_idx = call_count - 2  # 0, 1, 2
-                if node_idx == 1:
-                    # S2: describe_table
-                    return _make_alignment_response(
-                        "S2", "describe_table", "server-sqlite", "direct", 0.9
-                    )
-                elif node_idx == 2:
-                    # S3: read_query
-                    return _make_alignment_response(
-                        "S3", "read_query", "server-sqlite", "direct", 0.88
-                    )
-                else:
-                    # S1: list_tables (non-discriminative)
-                    return _make_alignment_response(
-                        "S1", "list_tables", "server-sqlite", "direct", 0.85
-                    )
+            elif call_count == 2:
+                # Single batched alignment call with all 3 subtask alignments
+                return _make_batched_alignment_response(
+                    ("S1", "list_tables", "server-sqlite", "direct", 0.85),
+                    ("S2", "describe_table", "server-sqlite", "direct", 0.9),
+                    ("S3", "read_query", "server-sqlite", "direct", 0.88),
+                )
             else:
                 # Probe generation calls (one per selected subtask)
-                probe_idx = call_count - 1 - n_nodes
+                probe_idx = call_count - 2
                 if probe_idx == 1:
                     return _make_probe_response(
                         "P1", "S3", "read_query",
@@ -591,7 +595,6 @@ class TestDatabaseIntrospection:
         """SQLite agent passing all probes should be FULLY_PROBED."""
         scenario = _get_query_by_id("database_introspection")
         task_dag = scenario["expected_mock_responses"]["task_analysis"]
-        n_nodes = len(task_dag["nodes"])
 
         mock_llm = MagicMock()
         call_count = 0
@@ -601,15 +604,14 @@ class TestDatabaseIntrospection:
             call_count += 1
             if call_count == 1:
                 return task_dag
-            elif call_count <= 1 + n_nodes:
-                # Alignment call (one per DAG node); subtask_id is
-                # overridden by align_tools_for_agent to the correct node ID.
+            elif call_count == 2:
+                # Single batched alignment call
                 return _make_alignment_response(
                     "S3", "read_query", "server-sqlite", "direct", 0.92
                 )
             else:
                 return _make_probe_response(
-                    f"P{call_count - 1 - n_nodes}", "S3", "read_query",
+                    f"P{call_count - 2}", "S3", "read_query",
                     {"query": "SELECT COUNT(*) FROM users WHERE status = 'active'"},
                     difficulty=0.4,
                 )
@@ -668,7 +670,6 @@ class TestWebScraping:
         """Puppeteer should outrank fetch for scraping tasks."""
         scenario = _get_query_by_id("web_scraping")
         task_dag = scenario["expected_mock_responses"]["task_analysis"]
-        n_nodes = len(task_dag["nodes"])
 
         # Puppeteer pipeline — direct match, success
         mock_llm_pup = MagicMock()
@@ -679,8 +680,8 @@ class TestWebScraping:
             pup_call += 1
             if pup_call == 1:
                 return task_dag
-            elif pup_call <= 1 + n_nodes:
-                # Alignment call (one per DAG node)
+            elif pup_call == 2:
+                # Single batched alignment call
                 return _make_alignment_response(
                     "S3", "puppeteer_evaluate", "server-puppeteer", "direct", 0.9
                 )
@@ -718,8 +719,8 @@ class TestWebScraping:
             fetch_call += 1
             if fetch_call == 1:
                 return task_dag
-            elif fetch_call <= 1 + n_nodes:
-                # Alignment call (one per DAG node)
+            elif fetch_call == 2:
+                # Single batched alignment call
                 return _make_alignment_response(
                     "S3", "fetch", "server-fetch", "partial", 0.4
                 )
@@ -794,7 +795,6 @@ class TestSlackNotification:
         """Slack should rank highest for notification tasks, GitHub and filesystem low."""
         scenario = _get_query_by_id("slack_notification")
         task_dag = scenario["expected_mock_responses"]["task_analysis"]
-        n_nodes = len(task_dag["nodes"])
 
         def run_agent(candidate_dict, alignment_response, probe_args, success):
             mock_llm = MagicMock()
@@ -805,8 +805,8 @@ class TestSlackNotification:
                 call_count_inner += 1
                 if call_count_inner == 1:
                     return task_dag
-                elif call_count_inner <= 1 + n_nodes:
-                    # Alignment call (one per DAG node)
+                elif call_count_inner == 2:
+                    # Single batched alignment call
                     return alignment_response
                 else:
                     # Probe generation — only reached if alignments exist

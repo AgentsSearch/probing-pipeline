@@ -153,7 +153,6 @@ class TestFullPipeline:
             # Mock LLM to return stage-appropriate responses
             mock_llm = MagicMock()
             task_dag = _mock_task_analysis_response()
-            n_nodes = len(task_dag["nodes"])
             call_count = 0
 
             def side_effect(*args, **kwargs):
@@ -161,8 +160,8 @@ class TestFullPipeline:
                 call_count += 1
                 if call_count == 1:
                     return task_dag
-                elif call_count <= 1 + n_nodes:
-                    # Alignment call (one per DAG node)
+                elif call_count == 2:
+                    # Single batched alignment call
                     return _mock_alignment_response()
                 else:
                     return _mock_probe_generation_response()
@@ -212,7 +211,6 @@ class TestFullPipeline:
 
             mock_llm = MagicMock()
             task_dag = _mock_task_analysis_response()
-            n_nodes = len(task_dag["nodes"])
             call_count = 0
 
             def side_effect(*args, **kwargs):
@@ -220,8 +218,8 @@ class TestFullPipeline:
                 call_count += 1
                 if call_count == 1:
                     return task_dag
-                elif call_count <= 1 + n_nodes:
-                    # Alignment call (one per DAG node)
+                elif call_count == 2:
+                    # Single batched alignment call
                     return _mock_alignment_response()
                 else:
                     return _mock_probe_generation_response()

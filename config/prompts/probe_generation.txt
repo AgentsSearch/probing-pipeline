@@ -24,7 +24,7 @@ Produce a JSON object:
 }
 
 ## Rules
-1. Arguments must be concrete, realistic values that would exercise the tool meaningfully.
+1. Arguments MUST contain concrete, realistic values matching the parameter schema. Look at the "required" and "properties" fields in the schema and provide a value for every required parameter. If the tool has no required parameters, you may use an empty arguments object {}.
 2. The rubric must have 2–4 dimensions with specific, evaluable pass thresholds.
 3. Set discrimination higher (1.0–2.0) for probes testing core capabilities, lower (0.5–1.0) for sanity checks.
 4. Timeout: 15s for simple tools, 30s for complex tools.

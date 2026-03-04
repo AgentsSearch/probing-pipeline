@@ -40,29 +40,23 @@ def _load_prompt_template() -> str:
 
 def _build_rerank_prompt(
     template: str,
-    subtask_id: str,
-    subtask_description: str,
-    capability: str,
-    candidates: list[ToolCandidate],
+    subtasks: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
 ) -> str:
-    """Fill in the reranking prompt template with subtask and tool details."""
-    tools_data = [
-        {
-            "tool_name": c.tool_name,
-            "server_id": c.server_id,
-            "description": c.description,
-            "parameter_schema": c.parameter_schema,
-            "capability_tags": c.capability_tags,
-        }
-        for c in candidates
-    ]
+    """Fill in the reranking prompt template with all subtasks and deduplicated tools.
 
+    Args:
+        template: The prompt template with {subtasks_json} and {tools_json} placeholders.
+        subtasks: List of subtask dicts with id, description, capability.
+        candidates: Deduplicated list of tool dicts for the prompt.
+
+    Returns:
+        Filled prompt string.
+    """
     return (
         template
-        .replace("{subtask_id}", subtask_id)
-        .replace("{subtask_description}", subtask_description)
-        .replace("{capability}", capability)
-        .replace("{tools_json}", json.dumps(tools_data, indent=2))
+        .replace("{subtasks_json}", json.dumps(subtasks, indent=2))
+        .replace("{tools_json}", json.dumps(candidates, indent=2))
     )
 
 
@@ -74,15 +68,23 @@ def _parse_rerank_response(
     alignments: list[ToolAlignment] = []
 
     for item in data.get("alignments", []):
-        tool_name = item["tool_name"]
+        if not isinstance(item, dict):
+            continue
+        tool_name = item.get("tool_name")
+        if not tool_name or not item.get("subtask_id") or not item.get("server_id"):
+            logger.warning("Skipping alignment entry with missing required fields: %s", item)
+            continue
+
         param_mapping = {}
-        for key, val in item.get("parameter_mapping", {}).items():
-            if isinstance(val, dict):
-                param_mapping[key] = ParameterMap(
-                    subtask_param=val.get("subtask_param", key),
-                    tool_param=val.get("tool_param", key),
-                    transform=val.get("transform"),
-                )
+        raw_mapping = item.get("parameter_mapping", {})
+        if isinstance(raw_mapping, dict):
+            for key, val in raw_mapping.items():
+                if isinstance(val, dict):
+                    param_mapping[key] = ParameterMap(
+                        subtask_param=val.get("subtask_param", key),
+                        tool_param=val.get("tool_param", key),
+                        transform=val.get("transform"),
+                    )
 
         alignments.append(
             ToolAlignment(
@@ -110,8 +112,8 @@ def align_tools_for_agent(
     """Run tool-task alignment for a single candidate agent.
 
     Phase A: For each subtask, retrieve top-k tools from the FAISS index
-             filtered to the agent's server.
-    Phase B: LLM reranks the shortlisted tools for precise alignment.
+             filtered to the agent's server. Collect and deduplicate.
+    Phase B: Single batched LLM call reranks all tools against all subtasks.
 
     Args:
         dag: The decomposed TaskDAG from Stage 1.
@@ -124,13 +126,18 @@ def align_tools_for_agent(
         AlignmentMap with alignments and coverage score for this agent.
     """
     template = _load_prompt_template()
-    all_alignments: list[ToolAlignment] = []
-    unmatched: list[str] = []
-
     candidate_servers = {agent_server_id}
 
+    # --- Phase A: FAISS retrieval for all subtasks, then deduplicate ---
+    # Track which subtasks had no FAISS results at all
+    nodes_with_candidates: list[str] = []
+    unmatched: list[str] = []
+
+    # Union of all tools across subtasks (keep highest similarity per tool)
+    merged_tools: dict[str, ToolCandidate] = {}
+    retrieval_scores: dict[str, float] = {}
+
     for node in dag.nodes:
-        # Phase A: embedding retrieval
         candidates = retriever.retrieve(
             query=node.description,
             candidate_server_ids=candidate_servers,
@@ -146,45 +153,102 @@ def align_tools_for_agent(
             unmatched.append(node.id)
             continue
 
-        # Shortlist for reranker
-        shortlist = candidates[:_RERANK_SHORTLIST]
-        retrieval_scores = {c.tool_name: c.similarity_score for c in shortlist}
+        nodes_with_candidates.append(node.id)
 
-        # Phase B: LLM reranking
-        prompt = _build_rerank_prompt(
-            template, node.id, node.description, node.capability, shortlist
+        for c in candidates[:_RERANK_SHORTLIST]:
+            existing = merged_tools.get(c.tool_name)
+            if existing is None or c.similarity_score > existing.similarity_score:
+                merged_tools[c.tool_name] = c
+            # Keep highest retrieval score per tool
+            retrieval_scores[c.tool_name] = max(
+                retrieval_scores.get(c.tool_name, 0.0),
+                c.similarity_score,
+            )
+
+    # If no subtask had any FAISS results, return empty alignment
+    if not nodes_with_candidates:
+        return AlignmentMap(
+            agent_id=agent_server_id,
+            server_tool_count=len(retriever.tools),
+            tools_evaluated=0,
+            alignments=[],
+            coverage_score=0.0,
+            unmatched_subtasks=[n.id for n in dag.nodes],
         )
 
-        try:
-            data = llm.complete_json(
-                prompt,
-                system="You are a tool-task alignment engine. Return only valid JSON.",
-            )
-            alignments = _parse_rerank_response(data, retrieval_scores)
+    # Build tool metadata lookup (description, schema) from merged candidates
+    tool_meta = {
+        c.tool_name: (c.description, c.parameter_schema)
+        for c in merged_tools.values()
+    }
 
-            # Force correct subtask ID — LLM may return descriptive
-            # strings instead of the node ID (e.g. "S1").
-            for a in alignments:
-                a.subtask_id = node.id
+    # Build prompt data
+    subtasks_data = [
+        {"id": node.id, "description": node.description, "capability": node.capability}
+        for node in dag.nodes
+        if node.id in nodes_with_candidates
+    ]
+    tools_data = [
+        {
+            "tool_name": c.tool_name,
+            "server_id": c.server_id,
+            "description": c.description,
+            "parameter_schema": c.parameter_schema,
+            "capability_tags": c.capability_tags,
+        }
+        for c in merged_tools.values()
+    ]
 
-            # Filter out "none" matches
-            valid = [a for a in alignments if a.match_type != "none"]
-            if valid:
-                all_alignments.extend(valid)
-            else:
-                unmatched.append(node.id)
+    # --- Phase B: single batched LLM reranking call ---
+    prompt = _build_rerank_prompt(template, subtasks_data, tools_data)
 
-        except Exception as e:
-            logger.error(
-                "Reranking failed for subtask %s: %s", node.id, e
-            )
-            unmatched.append(node.id)
+    valid_node_ids = {node.id for node in dag.nodes}
+    all_alignments: list[ToolAlignment] = []
 
-    # Compute coverage
+    try:
+        data = llm.complete_json(
+            prompt,
+            system="You are a tool-task alignment engine. Return only valid JSON.",
+            max_tokens=8192,
+        )
+        alignments = _parse_rerank_response(data, retrieval_scores)
+
+        # Validate subtask_ids and populate tool metadata
+        for a in alignments:
+            # Ensure subtask_id is a known node ID
+            if a.subtask_id not in valid_node_ids:
+                logger.warning(
+                    "LLM returned unknown subtask_id '%s', skipping alignment",
+                    a.subtask_id,
+                )
+                continue
+            if a.tool_name in tool_meta:
+                a.tool_description, a.tool_parameter_schema = tool_meta[a.tool_name]
+            if a.match_type != "none":
+                all_alignments.append(a)
+
+    except Exception as e:
+        logger.error("Batched reranking failed for %s: %s", agent_server_id, e)
+        # All subtasks that had candidates are now unmatched
+        unmatched.extend(nodes_with_candidates)
+
+    # Check for subtasks with candidates but no valid alignments
     matched_subtasks = {a.subtask_id for a in all_alignments}
-    total_subtasks = len(dag.nodes)
-    coverage = len(matched_subtasks) / total_subtasks if total_subtasks > 0 else 0.0
+    for node_id in nodes_with_candidates:
+        if node_id not in matched_subtasks and node_id not in unmatched:
+            unmatched.append(node_id)
 
+    # Compute coverage weighted by best match confidence per subtask
+    # A subtask matched with confidence 0.25 contributes 0.25, not 1.0
+    total_subtasks = len(dag.nodes)
+    if total_subtasks > 0 and all_alignments:
+        best_conf: dict[str, float] = {}
+        for a in all_alignments:
+            if a.subtask_id not in best_conf or a.confidence > best_conf[a.subtask_id]:
+                best_conf[a.subtask_id] = a.confidence
+        coverage = sum(best_conf.values()) / total_subtasks
+    else:
+        coverage = 0.0
     tools_evaluated = len({a.tool_name for a in all_alignments})
 
     alignment_map = AlignmentMap(

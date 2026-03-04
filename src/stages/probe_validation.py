@@ -99,6 +99,9 @@ def _validate_schema(
     errors: list[str] = []
 
     if not probe.arguments:
+        # Empty arguments are valid if the tool has no required params
+        if tool_schema is not None and not tool_schema.get("required"):
+            return errors
         errors.append("Probe has no arguments")
         return errors
 
