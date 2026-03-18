@@ -39,3 +39,6 @@ Tool description: {tool_description}
 Parameter schema: {parameter_schema}
 
 Query context: {query}
+
+Known limitations:
+{known_limitations}

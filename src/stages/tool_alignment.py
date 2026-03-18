@@ -42,21 +42,36 @@ def _build_rerank_prompt(
     template: str,
     subtasks: list[dict[str, Any]],
     candidates: list[dict[str, Any]],
+    agent_description: str | None = None,
+    agent_capabilities: list[str] | None = None,
 ) -> str:
     """Fill in the reranking prompt template with all subtasks and deduplicated tools.
 
     Args:
-        template: The prompt template with {subtasks_json} and {tools_json} placeholders.
+        template: The prompt template with {subtasks_json}, {tools_json},
+            and optional {agent_context} placeholders.
         subtasks: List of subtask dicts with id, description, capability.
         candidates: Deduplicated list of tool dicts for the prompt.
+        agent_description: Optional agent description for context.
+        agent_capabilities: Optional list of agent capabilities.
 
     Returns:
         Filled prompt string.
     """
+    agent_context = ""
+    if agent_description or agent_capabilities:
+        parts = []
+        if agent_description:
+            parts.append(f"Agent description: {agent_description}")
+        if agent_capabilities:
+            parts.append(f"Agent capabilities: {', '.join(agent_capabilities)}")
+        agent_context = "\n".join(parts)
+
     return (
         template
         .replace("{subtasks_json}", json.dumps(subtasks, indent=2))
         .replace("{tools_json}", json.dumps(candidates, indent=2))
+        .replace("{agent_context}", agent_context)
     )
 
 
@@ -108,6 +123,8 @@ def align_tools_for_agent(
     retriever: ToolRetriever,
     llm: LLMClient,
     retrieval_k: int = 20,
+    agent_description: str | None = None,
+    agent_capabilities: list[str] | None = None,
 ) -> AlignmentMap:
     """Run tool-task alignment for a single candidate agent.
 
@@ -121,6 +138,8 @@ def align_tools_for_agent(
         retriever: Initialised ToolRetriever with loaded FAISS index.
         llm: Initialised LLMClient.
         retrieval_k: Number of tools to retrieve per subtask from FAISS.
+        agent_description: Optional agent description for richer context.
+        agent_capabilities: Optional list of agent capabilities.
 
     Returns:
         AlignmentMap with alignments and coverage score for this agent.
@@ -200,7 +219,11 @@ def align_tools_for_agent(
     ]
 
     # --- Phase B: single batched LLM reranking call ---
-    prompt = _build_rerank_prompt(template, subtasks_data, tools_data)
+    prompt = _build_rerank_prompt(
+        template, subtasks_data, tools_data,
+        agent_description=agent_description,
+        agent_capabilities=agent_capabilities,
+    )
 
     valid_node_ids = {node.id for node in dag.nodes}
     all_alignments: list[ToolAlignment] = []

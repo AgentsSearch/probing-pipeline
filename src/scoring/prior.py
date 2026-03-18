@@ -1,10 +1,11 @@
 """Prior construction — combine metadata signals into a Gaussian prior.
 
 Signals and weights:
-  Arena ELO:            0.40 (if available)
-  Retrieval similarity: 0.25 (always)
-  Tool-task coverage:   0.20 (always)
-  Community rating:     0.15 (if available)
+  Arena ELO:              0.35 (if available)
+  Retrieval similarity:   0.22 (always)
+  Tool-task coverage:     0.18 (always)
+  Community rating:       0.13 (if available)
+  Documentation quality:  0.12 (if available)
 
 Prior sigma = 0.3 (tight, 3+ signals) or 0.5 (diffuse, fewer signals).
 """
@@ -46,6 +47,7 @@ def construct_prior(
     coverage_score: float,
     arena_elo: float | None = None,
     community_rating: float | None = None,
+    documentation_quality: float | None = None,
     config_path: str | Path | None = None,
 ) -> GaussianPrior:
     """Construct a Gaussian prior for agent capability from metadata signals.
@@ -55,6 +57,7 @@ def construct_prior(
         coverage_score: Tool-task coverage from Stage 2 (0-1).
         arena_elo: Agent Arena ELO rating, if available.
         community_rating: Community rating (e.g. 0-5 stars), if available.
+        documentation_quality: Documentation quality score (0-1), if available.
         config_path: Path to config YAML. Defaults to config/default.yaml.
 
     Returns:
@@ -82,6 +85,11 @@ def construct_prior(
     if community_rating is not None:
         normalised_rating = _normalise_community_rating(community_rating)
         signals.append((normalised_rating, weights["community_rating"]))
+        signal_count += 1
+
+    if documentation_quality is not None:
+        clamped_dq = max(0.0, min(1.0, documentation_quality))
+        signals.append((clamped_dq, weights["documentation_quality"]))
         signal_count += 1
 
     # Compute weighted mean, renormalising weights to sum to 1

@@ -8,7 +8,11 @@ from src.models.probe import RubricDimension, Probe, ProbePlan, ProbeTemplate
 from src.models.scoring import GaussianPrior, PosteriorEstimate
 from src.models.integration import (
     CandidateAgent,
+    InlineTool,
+    LLMExtracted,
+    RemoteEndpoint,
     RetrievalResult,
+    ProbeExecutionRequest,
     ProbeExecutionResult,
     ActionStep,
     RankedAgent,
@@ -257,3 +261,142 @@ class TestIntegrationModels:
             probe_summary="P1: PASS", prior_influence=0.3,
         )
         assert ra.probe_summary == "P1: PASS"
+
+
+# --- New Rich Schema Models ---
+
+
+class TestRemoteEndpoint:
+    def test_creation(self):
+        ep = RemoteEndpoint(type="streamable-http", url="https://api.example.com/mcp")
+        assert ep.type == "streamable-http"
+        assert ep.url == "https://api.example.com/mcp"
+
+    def test_sse_type(self):
+        ep = RemoteEndpoint(type="sse", url="http://localhost:8080/sse")
+        assert ep.type == "sse"
+
+
+class TestLLMExtracted:
+    def test_defaults(self):
+        llm = LLMExtracted()
+        assert llm.capabilities == []
+        assert llm.limitations == []
+        assert llm.requirements == []
+
+    def test_with_data(self):
+        llm = LLMExtracted(
+            capabilities=["file read", "file write"],
+            limitations=["no binary files"],
+            requirements=["filesystem access"],
+        )
+        assert len(llm.capabilities) == 2
+        assert "no binary files" in llm.limitations
+
+
+class TestInlineTool:
+    def test_creation(self):
+        tool = InlineTool(
+            name="get_weather",
+            description="Get current weather",
+            input_schema={"type": "object", "properties": {"city": {"type": "string"}}},
+        )
+        assert tool.name == "get_weather"
+        assert "city" in tool.input_schema["properties"]
+
+    def test_defaults(self):
+        tool = InlineTool(name="ping", description="Health check")
+        assert tool.input_schema == {}
+
+
+class TestCandidateAgentRichSchema:
+    def test_new_score_field(self):
+        agent = CandidateAgent(agent_id="a1", score=0.9)
+        assert agent.score == 0.9
+        assert agent.retrieval_score == 0.9  # alias
+
+    def test_legacy_retrieval_score(self):
+        agent = CandidateAgent(
+            agent_id="a1", retrieval_score=0.85,
+            mcp_server_url="http://localhost:8080",
+        )
+        assert agent.score == 0.85
+        assert agent.retrieval_score == 0.85
+
+    def test_legacy_mcp_server_url(self):
+        agent = CandidateAgent(
+            agent_id="a1", score=0.7,
+            mcp_server_url="http://localhost:8080",
+        )
+        assert agent.mcp_server_url == "http://localhost:8080"
+        assert len(agent.remotes) == 1
+        assert agent.remotes[0].type == "sse"
+
+    def test_remotes_with_preference(self):
+        agent = CandidateAgent(
+            agent_id="a1", score=0.7,
+            remotes=[
+                RemoteEndpoint(type="sse", url="http://localhost:8080/sse"),
+                RemoteEndpoint(type="streamable-http", url="http://localhost:8080/mcp"),
+            ],
+        )
+        assert agent.best_remote_url() == "http://localhost:8080/mcp"
+        assert agent.mcp_server_url == "http://localhost:8080/mcp"
+
+    def test_no_remotes(self):
+        agent = CandidateAgent(agent_id="a1", score=0.5)
+        assert agent.best_remote_url() is None
+        assert agent.mcp_server_url is None
+
+    def test_missing_score_raises(self):
+        with pytest.raises(TypeError, match="score.*required"):
+            CandidateAgent(agent_id="a1")
+
+    def test_rich_fields(self):
+        agent = CandidateAgent(
+            agent_id="a1",
+            score=0.9,
+            description="A weather agent",
+            tools=[InlineTool(name="get_weather", description="Get weather")],
+            llm_extracted=LLMExtracted(
+                capabilities=["weather lookup"],
+                limitations=["no historical data"],
+            ),
+            documentation_quality=0.85,
+            is_available=True,
+            testability_tier="FULLY_PROBED",
+        )
+        assert agent.description == "A weather agent"
+        assert len(agent.tools) == 1
+        assert agent.llm_extracted.limitations == ["no historical data"]
+        assert agent.documentation_quality == 0.85
+        assert agent.is_available is True
+        assert agent.testability_tier == "FULLY_PROBED"
+
+    def test_is_available_default(self):
+        agent = CandidateAgent(agent_id="a1", score=0.5)
+        assert agent.is_available is True
+
+    def test_inline_tools_default(self):
+        agent = CandidateAgent(agent_id="a1", score=0.5)
+        assert agent.tools == []
+
+
+class TestProbeExecutionRequestRemotes:
+    def test_with_remotes(self):
+        req = ProbeExecutionRequest(
+            agent_id="a1",
+            probes=[],
+            total_timeout=30,
+            remotes=[RemoteEndpoint(type="sse", url="http://localhost:8080")],
+        )
+        assert len(req.remotes) == 1
+
+    def test_legacy_mcp_server_url(self):
+        req = ProbeExecutionRequest(
+            agent_id="a1",
+            probes=[],
+            total_timeout=30,
+            mcp_server_url="http://localhost:8080",
+        )
+        assert req.mcp_server_url == "http://localhost:8080"

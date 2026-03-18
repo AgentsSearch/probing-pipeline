@@ -56,6 +56,32 @@ class ToolRetriever:
         self._encoder = SentenceTransformer(embedding_model)
         logger.info("Loaded tool index with %d tools", len(self.tools))
 
+    def add_tools_at_runtime(self, tools: list[ToolRecord]) -> int:
+        """Dynamically add tools to the FAISS index at runtime.
+
+        Encodes tool descriptions, appends embeddings to the existing index,
+        and extends the tools list in parallel.
+
+        Args:
+            tools: List of ToolRecord objects to add.
+
+        Returns:
+            Number of tools successfully added.
+        """
+        if not tools:
+            return 0
+
+        texts = [f"{t.tool_name}: {t.description}" for t in tools]
+        embeddings = self._encoder.encode(texts, show_progress_bar=False)
+        embeddings = np.array(embeddings, dtype=np.float32)
+        faiss.normalize_L2(embeddings)
+
+        self.index.add(embeddings)
+        self.tools.extend(tools)
+
+        logger.info("Added %d tools at runtime (total: %d)", len(tools), len(self.tools))
+        return len(tools)
+
     def retrieve(
         self,
         query: str,

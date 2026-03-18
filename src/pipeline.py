@@ -24,6 +24,7 @@ from src.models.integration import (
     RankedAgent,
     RetrievalResult,
 )
+from src.tool_index.indexer import ToolRecord
 from src.models.probe import ProbePlan
 from src.models.scoring import PosteriorEstimate
 from src.models.task import TaskDAG
@@ -142,6 +143,16 @@ class ProbePipeline:
         """
         query = retrieval_result.query
 
+        # Filter unavailable agents early
+        available = [a for a in retrieval_result.candidates if a.is_available]
+        skipped = [a for a in retrieval_result.candidates if not a.is_available]
+        if skipped:
+            logger.info(
+                "Skipping %d unavailable agents: %s",
+                len(skipped),
+                ", ".join(a.agent_id for a in skipped),
+            )
+
         # Stage 1: Task Analysis (shared across all agents)
         dag, _ = self.run_stage_1(query)
         if dag is None:
@@ -155,9 +166,15 @@ class ProbePipeline:
             ]
             return None, results
 
-        # Stages 2-4: per agent
+        # Stages 2-4: per agent (only available agents)
         agent_results: list[AgentPipelineResult] = []
-        for agent in retrieval_result.candidates:
+        for agent in skipped:
+            agent_results.append(AgentPipelineResult(
+                agent=agent,
+                error_code=ALIGNMENT_FAILED,
+                error_detail="Agent unavailable",
+            ))
+        for agent in available:
             result = self._process_agent(dag, agent)
             agent_results.append(result)
 
@@ -169,11 +186,45 @@ class ProbePipeline:
         """Run Stages 2-4 for a single agent with per-stage timing."""
         result = AgentPipelineResult(agent=agent)
 
+        # Index inline tools at runtime (with dedup)
+        if agent.tools:
+            existing_names = {t.tool_name for t in self.retriever.tools
+                             if t.server_id == agent.agent_id}
+            new_tools = [
+                ToolRecord(
+                    tool_name=t.name,
+                    server_id=agent.agent_id,
+                    description=t.description,
+                    parameter_schema=t.input_schema,
+                )
+                for t in agent.tools
+                if t.name not in existing_names
+            ]
+            if new_tools:
+                self.retriever.add_tools_at_runtime(new_tools)
+
+        # Build agent context for Stage 2
+        agent_description = agent.description
+        agent_capabilities = (
+            agent.llm_extracted.capabilities
+            if agent.llm_extracted
+            else None
+        )
+
+        # Build limitations for Stage 3
+        limitations = (
+            agent.llm_extracted.limitations
+            if agent.llm_extracted
+            else None
+        )
+
         # Stage 2: Tool-Task Alignment
         t0 = time.monotonic()
         try:
             result.alignment = align_tools_for_agent(
-                dag, agent.agent_id, self.retriever, self.llm
+                dag, agent.agent_id, self.retriever, self.llm,
+                agent_description=agent_description,
+                agent_capabilities=agent_capabilities,
             )
         except Exception as e:
             logger.error("Stage 2 failed for %s: %s", agent.agent_id, e)
@@ -194,6 +245,7 @@ class ProbePipeline:
                 template_library=self.template_library,
                 budget=self.config.probe_budget,
                 total_timeout=self.config.total_timeout,
+                limitations=limitations,
             )
         except Exception as e:
             logger.error("Stage 3 failed for %s: %s", agent.agent_id, e)
@@ -254,10 +306,11 @@ class ProbePipeline:
             else 0.0
         )
         prior = construct_prior(
-            retrieval_score=agent.retrieval_score,
+            retrieval_score=agent.score,
             coverage_score=coverage,
             arena_elo=agent.arena_elo,
             community_rating=agent.community_rating,
+            documentation_quality=agent.documentation_quality,
         )
 
         # Filter execution results by interaction confidence
@@ -303,7 +356,7 @@ class ProbePipeline:
                 sigma=prior.sigma,
                 confidence=0.0,
                 n_probes=0,
-                testability_tier="UNTESTABLE",
+                testability_tier=agent.testability_tier or "UNTESTABLE",
                 prior_influence=1.0,
             )
 

@@ -71,6 +71,35 @@ class TestPrior:
         assert _normalise_community_rating(5.0) == 1.0
         assert _normalise_community_rating(2.5) == 0.5
 
+    def test_documentation_quality_signal(self):
+        prior_without = construct_prior(retrieval_score=0.7, coverage_score=0.8)
+        prior_with = construct_prior(
+            retrieval_score=0.7, coverage_score=0.8,
+            documentation_quality=0.95,
+        )
+        # Adding a high doc quality signal should increase mu
+        assert prior_with.mu > prior_without.mu
+        # 3 signals → tight sigma
+        assert prior_with.sigma == 0.3
+
+    def test_documentation_quality_low_value(self):
+        prior_without = construct_prior(retrieval_score=0.7, coverage_score=0.8)
+        prior_with_low = construct_prior(
+            retrieval_score=0.7, coverage_score=0.8,
+            documentation_quality=0.1,
+        )
+        # Adding a low doc quality signal should decrease mu
+        assert prior_with_low.mu < prior_without.mu
+
+    def test_all_five_signals(self):
+        prior = construct_prior(
+            retrieval_score=0.7, coverage_score=0.8,
+            arena_elo=1500, community_rating=4.0,
+            documentation_quality=0.85,
+        )
+        assert prior.sigma == 0.3  # 5 signals → tight
+        assert 0.05 <= prior.mu <= 0.95
+
 
 # --- BIRT ---
 

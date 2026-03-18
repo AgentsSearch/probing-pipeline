@@ -17,10 +17,11 @@ scoring:
   prior_sigma_tight: 0.3
   prior_sigma_diffuse: 0.5
   weights:
-    arena_elo: 0.40
-    retrieval_similarity: 0.25
-    coverage: 0.20
-    community_rating: 0.15
+    arena_elo: 0.35
+    retrieval_similarity: 0.22
+    coverage: 0.18
+    community_rating: 0.13
+    documentation_quality: 0.12
 
 tool_index:
   embedding_model: all-MiniLM-L6-v2

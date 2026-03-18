@@ -33,6 +33,8 @@ For EACH subtask, evaluate EVERY candidate tool and produce alignment entries. R
 
 ## Context
 
+{agent_context}
+
 Subtasks to evaluate:
 {subtasks_json}
 

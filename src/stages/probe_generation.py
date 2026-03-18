@@ -45,6 +45,7 @@ def _select_subtasks(
     dag: TaskDAG,
     alignment: AlignmentMap,
     budget: int,
+    limitations: list[str] | None = None,
 ) -> list[tuple[SubtaskNode, ToolAlignment]]:
     """Select which subtasks to probe using the discriminative critical-path strategy.
 
@@ -66,8 +67,22 @@ def _select_subtasks(
             continue
         candidates.append((node, best))
 
-    # Sort by difficulty descending
-    candidates.sort(key=lambda x: x[0].difficulty, reverse=True)
+    # Demote subtasks that overlap with known limitations (sort lower, don't exclude)
+    limitation_keywords: set[str] = set()
+    if limitations:
+        for lim in limitations:
+            limitation_keywords.update(lim.lower().split())
+
+    def _sort_key(pair: tuple[SubtaskNode, ToolAlignment]) -> tuple[bool, float]:
+        node = pair[0]
+        overlaps = False
+        if limitation_keywords:
+            desc_words = set(node.description.lower().split())
+            overlaps = bool(desc_words & limitation_keywords)
+        # Non-overlapping first (False < True), then by difficulty descending
+        return (overlaps, -node.difficulty)
+
+    candidates.sort(key=_sort_key)
 
     selected = candidates[:budget]
 
@@ -127,9 +142,15 @@ def _probe_from_llm(
     query: str,
     llm: LLMClient,
     probe_index: int,
+    limitations: list[str] | None = None,
 ) -> Probe:
     """Generate a probe via LLM when no template is available."""
     template = _load_prompt_template()
+
+    known_limitations = ""
+    if limitations:
+        known_limitations = "\n".join(f"- {lim}" for lim in limitations)
+
     prompt = (
         template
         .replace("{subtask_description}", node.description)
@@ -138,6 +159,7 @@ def _probe_from_llm(
         .replace("{tool_description}", alignment.tool_description or f"Tool on server {alignment.server_id}")
         .replace("{parameter_schema}", json.dumps(alignment.tool_parameter_schema, indent=2) if alignment.tool_parameter_schema else json.dumps(dict(alignment.parameter_mapping), default=str))
         .replace("{query}", query)
+        .replace("{known_limitations}", known_limitations)
     )
 
     data = llm.complete_json(
@@ -183,6 +205,7 @@ def generate_probe_plan(
     template_library: TemplateLibrary | None = None,
     budget: int = 2,
     total_timeout: int = 30,
+    limitations: list[str] | None = None,
 ) -> ProbePlan:
     """Generate a probe plan for a single agent.
 
@@ -194,11 +217,12 @@ def generate_probe_plan(
         template_library: Optional template library for cache hits.
         budget: Maximum number of probes.
         total_timeout: Total wall-clock budget in seconds.
+        limitations: Optional list of known agent limitations from LLM extraction.
 
     Returns:
         ProbePlan with 1-budget executable probes.
     """
-    selected = _select_subtasks(dag, alignment, budget)
+    selected = _select_subtasks(dag, alignment, budget, limitations=limitations)
 
     if not selected:
         logger.warning("No probeable subtasks for agent %s", alignment.agent_id)
@@ -231,7 +255,7 @@ def generate_probe_plan(
 
         # Fall back to LLM generation
         try:
-            probe = _probe_from_llm(node, tool_align, query, llm, i)
+            probe = _probe_from_llm(node, tool_align, query, llm, i, limitations=limitations)
             dedup_key = f"{probe.tool}:{json.dumps(probe.arguments, sort_keys=True)}"
             if dedup_key in seen_probes:
                 logger.info("Skipping duplicate probe for %s", probe.tool)

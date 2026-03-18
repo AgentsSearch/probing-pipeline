@@ -167,7 +167,7 @@ def main():
     candidates = [
         CandidateAgent(
             agent_id=s["server_id"],
-            retrieval_score=0.7,
+            score=0.7,
             mcp_server_url=s["mcp_server_url"],
         )
         for s in servers
@@ -254,7 +254,7 @@ def main():
         # Execution (simulated)
         t0 = time.monotonic()
         if args.simulate_execution and result.validated_plan and result.validated_plan.probes:
-            exec_results = simulate_execution(result.validated_plan, agent.mcp_server_url)
+            exec_results = simulate_execution(result.validated_plan, agent.best_remote_url() or "")
             _log_step("Execution", f"{len(exec_results)} probes executed (simulated)", time.monotonic() - t0)
         else:
             exec_results = []
