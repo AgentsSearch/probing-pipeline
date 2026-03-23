@@ -4,11 +4,12 @@ Input:  TaskDAG + AlignmentMap
 Output: ProbePlan with 1-3 executable Probes
 Cost:   0-1 LLM calls (0 if template cache hit)
 
-Strategy: Discriminative Critical-Path
-  1. Filter subtasks: is_discriminative AND match_type in {direct, partial}
-  2. Sort by difficulty descending
-  3. Select top-N (N = budget)
-  4. If budget allows and all selected are high-difficulty, add a low-difficulty sanity check
+Strategy: Discriminative Critical-Path (tiered)
+  Tier 1: is_discriminative AND match_type in {direct, partial} — strict
+  Tier 2: is_discriminative AND match_type == "inferred" — inferred promotion
+  Tier 3: ANY subtask with match_type in {direct, partial, inferred} — relaxed fallback
+  Within each tier: sort by difficulty descending, select top-N (N = budget)
+  Sanity check: if all selected are high-difficulty and budget allows, add a low-difficulty probe
 """
 
 from __future__ import annotations
@@ -59,6 +60,7 @@ def _select_subtasks(
     """
     candidates: list[tuple[SubtaskNode, ToolAlignment]] = []
 
+    # Tier 1 (strict): discriminative subtasks with direct/partial matches
     for node in dag.nodes:
         if not node.is_discriminative:
             continue
@@ -100,15 +102,25 @@ def _select_subtasks(
                     selected.append((node, best))
                     break
 
-    # Fallback: if no discriminative subtask qualified, probe any subtask
-    # with a direct/partial match so the agent gets at least some evaluation
+    # Tier 2: if Tier 1 found nothing, try discriminative subtasks with "inferred" matches
     if not selected:
-        selected_ids: set[str] = set()
+        for node in dag.nodes:
+            if not node.is_discriminative:
+                continue
+            best = alignment.best_alignment_for_subtask(node.id)
+            if best is not None and best.match_type == "inferred":
+                selected.append((node, best))
+                if len(selected) >= budget:
+                    break
+        selected.sort(key=_sort_key)
+        selected = selected[:budget]
+
+    # Tier 3 (relaxed fallback): any subtask with direct/partial/inferred match
+    if not selected:
         for node in dag.nodes:
             best = alignment.best_alignment_for_subtask(node.id)
-            if best and best.match_type in ("direct", "partial"):
+            if best and best.match_type in ("direct", "partial", "inferred"):
                 selected.append((node, best))
-                selected_ids.add(node.id)
                 if len(selected) >= budget:
                     break
 
@@ -225,7 +237,15 @@ def generate_probe_plan(
     selected = _select_subtasks(dag, alignment, budget, limitations=limitations)
 
     if not selected:
-        logger.warning("No probeable subtasks for agent %s", alignment.agent_id)
+        n_align = len(alignment.alignments)
+        by_type: dict[str, int] = {}
+        for a in alignment.alignments:
+            by_type[a.match_type] = by_type.get(a.match_type, 0) + 1
+        n_disc = sum(1 for n in dag.nodes if n.is_discriminative)
+        logger.warning(
+            "No probeable subtasks for agent %s: %d alignments %s, %d/%d discriminative",
+            alignment.agent_id, n_align, by_type, n_disc, len(dag.nodes),
+        )
         return ProbePlan(
             query=query,
             agent_id=alignment.agent_id,

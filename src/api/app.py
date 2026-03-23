@@ -201,6 +201,10 @@ async def probe(request: ProbeRequest):
 
     # Convert Pydantic models to dataclasses
     candidates = [to_candidate_agent(c) for c in request.candidates]
+
+    for c in candidates:
+        n_tools = len(c.tools) if c.tools else 0
+        logger.info("Agent %s: %d tools, available=%s", c.agent_id, n_tools, c.is_available)
     retrieval_result = RetrievalResult(query=request.query, candidates=candidates)
 
     # Snapshot call_log length for per-request metrics

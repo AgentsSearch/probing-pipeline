@@ -168,6 +168,11 @@ def align_tools_for_agent(
             extra_index=extra_index,
         )
 
+        logger.debug(
+            "Subtask %s: %d tools retrieved for %s (ephemeral=%s)",
+            node.id, len(candidates), agent_server_id, extra_index is not None,
+        )
+
         if not candidates:
             logger.info(
                 "No tools found for subtask %s on server %s",
