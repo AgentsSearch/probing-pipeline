@@ -200,6 +200,17 @@ class ProbePipeline:
             ]
             extra_index = self.retriever.build_ephemeral_index(tool_records)
 
+        if extra_index is not None:
+            logger.info(
+                "Agent %s: ephemeral index with %d tools",
+                agent.agent_id, len(extra_index[1]),
+            )
+        else:
+            logger.warning(
+                "Agent %s: no inline tools — ephemeral index NOT built (agent.tools=%s)",
+                agent.agent_id, "empty" if agent.tools is not None else "None",
+            )
+
         # Build agent context for Stage 2
         agent_description = agent.description
         agent_capabilities = (

@@ -196,6 +196,10 @@ def align_tools_for_agent(
 
     # If no subtask had any FAISS results, return empty alignment
     if not nodes_with_candidates:
+        logger.warning(
+            "No FAISS candidates for ANY subtask on %s — skipping LLM reranker entirely",
+            agent_server_id,
+        )
         return AlignmentMap(
             agent_id=agent_server_id,
             server_tool_count=len(retriever.tools),
@@ -243,6 +247,10 @@ def align_tools_for_agent(
             prompt,
             system="You are a tool-task alignment engine. Return only valid JSON.",
             max_tokens=8192,
+        )
+        logger.debug(
+            "Reranker response for %s: %d alignment entries, keys=%s",
+            agent_server_id, len(data.get("alignments", [])), list(data.keys()),
         )
         alignments = _parse_rerank_response(data, retrieval_scores)
 

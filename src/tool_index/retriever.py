@@ -162,6 +162,12 @@ class ToolRetriever:
         # Sort by descending similarity and apply filters
         raw_hits.sort(key=lambda h: h[0], reverse=True)
 
+        raw_server_ids = {t.server_id for _, t in raw_hits}
+        logger.debug(
+            "Raw hits: %d (servers: %s), filtering for: %s",
+            len(raw_hits), raw_server_ids, candidate_server_ids,
+        )
+
         results: list[ToolCandidate] = []
         for score, tool in raw_hits:
             # Server filter
@@ -187,6 +193,7 @@ class ToolRetriever:
             if len(results) >= k:
                 break
 
+        logger.debug("After filter: %d/%d hits survived", len(results), len(raw_hits))
         logger.info(
             "Retrieved %d tools for query: %s",
             len(results),
