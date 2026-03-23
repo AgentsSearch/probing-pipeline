@@ -82,6 +82,36 @@ class ToolRetriever:
         logger.info("Added %d tools at runtime (total: %d)", len(tools), len(self.tools))
         return len(tools)
 
+    def build_ephemeral_index(
+        self, tools: list[ToolRecord]
+    ) -> tuple[faiss.Index, list[ToolRecord]] | None:
+        """Build a standalone FAISS index for temporary tools.
+
+        Creates a small IndexFlatIP from the given tools without mutating
+        the base index or tools list. The caller owns the returned objects
+        and they are garbage-collected when no longer referenced.
+
+        Args:
+            tools: ToolRecord objects to index ephemerally.
+
+        Returns:
+            (index, tools) tuple, or None if *tools* is empty.
+        """
+        if not tools:
+            return None
+
+        texts = [f"{t.tool_name}: {t.description}" for t in tools]
+        embeddings = self._encoder.encode(texts, show_progress_bar=False)
+        embeddings = np.array(embeddings, dtype=np.float32)
+        faiss.normalize_L2(embeddings)
+
+        dim = embeddings.shape[1]
+        index = faiss.IndexFlatIP(dim)
+        index.add(embeddings)
+
+        logger.info("Built ephemeral index with %d tools", len(tools))
+        return index, list(tools)
+
     def retrieve(
         self,
         query: str,
@@ -89,6 +119,7 @@ class ToolRetriever:
         candidate_server_ids: set[str] | None = None,
         tag_filter: list[str] | None = None,
         k: int = 20,
+        extra_index: tuple[faiss.Index, list[ToolRecord]] | None = None,
     ) -> list[ToolCandidate]:
         """Retrieve the top-k tools matching a query.
 
@@ -97,6 +128,8 @@ class ToolRetriever:
             candidate_server_ids: If set, only return tools from these servers.
             tag_filter: If set, pre-filter to tools with at least one matching tag.
             k: Number of results to return.
+            extra_index: Optional ephemeral (index, tools) pair to search
+                alongside the base index. Results are merged by score.
 
         Returns:
             List of ToolCandidate sorted by descending similarity.
@@ -106,20 +139,31 @@ class ToolRetriever:
         vec = np.array(vec, dtype=np.float32)
         faiss.normalize_L2(vec)
 
-        # When filtering by server, search the full index since the agent's
-        # tools may not be in the global top-k*5 after many agents are indexed
-        if candidate_server_ids:
-            search_k = len(self.tools)
-        else:
-            search_k = min(k * 5, len(self.tools))
+        search_k = min(k * 5, len(self.tools))
         scores, indices = self.index.search(vec, search_k)
 
-        results: list[ToolCandidate] = []
+        # Collect (score, ToolRecord) pairs from base index
+        raw_hits: list[tuple[float, ToolRecord]] = []
         for score, idx in zip(scores[0], indices[0]):
             if idx < 0:
                 continue
-            tool = self.tools[idx]
+            raw_hits.append((float(score), self.tools[idx]))
 
+        # Search the ephemeral index if provided
+        if extra_index is not None:
+            ep_index, ep_tools = extra_index
+            ep_k = min(k * 5, len(ep_tools))
+            ep_scores, ep_indices = ep_index.search(vec, ep_k)
+            for score, idx in zip(ep_scores[0], ep_indices[0]):
+                if idx < 0:
+                    continue
+                raw_hits.append((float(score), ep_tools[idx]))
+
+        # Sort by descending similarity and apply filters
+        raw_hits.sort(key=lambda h: h[0], reverse=True)
+
+        results: list[ToolCandidate] = []
+        for score, tool in raw_hits:
             # Server filter
             if candidate_server_ids and tool.server_id not in candidate_server_ids:
                 continue
@@ -133,7 +177,7 @@ class ToolRetriever:
                     tool_name=tool.tool_name,
                     server_id=tool.server_id,
                     description=tool.description,
-                    similarity_score=float(score),
+                    similarity_score=score,
                     capability_tags=tool.capability_tags,
                     parameter_schema=tool.parameter_schema,
                     complexity_estimate=tool.complexity_estimate,

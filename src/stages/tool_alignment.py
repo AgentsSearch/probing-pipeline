@@ -16,9 +16,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import faiss
+
 from src.llm.client import LLMClient
 from src.models.alignment import AlignmentMap, ParameterMap, ToolAlignment
 from src.models.task import TaskDAG
+from src.tool_index.indexer import ToolRecord
 from src.tool_index.retriever import ToolCandidate, ToolRetriever
 
 logger = logging.getLogger(__name__)
@@ -125,6 +128,7 @@ def align_tools_for_agent(
     retrieval_k: int = 20,
     agent_description: str | None = None,
     agent_capabilities: list[str] | None = None,
+    extra_index: tuple[faiss.Index, list[ToolRecord]] | None = None,
 ) -> AlignmentMap:
     """Run tool-task alignment for a single candidate agent.
 
@@ -161,6 +165,7 @@ def align_tools_for_agent(
             query=node.description,
             candidate_server_ids=candidate_servers,
             k=retrieval_k,
+            extra_index=extra_index,
         )
 
         if not candidates:

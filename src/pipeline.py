@@ -186,11 +186,10 @@ class ProbePipeline:
         """Run Stages 2-4 for a single agent with per-stage timing."""
         result = AgentPipelineResult(agent=agent)
 
-        # Index inline tools at runtime (with dedup)
+        # Build ephemeral FAISS index for inline tools (discarded after this method)
+        extra_index = None
         if agent.tools:
-            existing_names = {t.tool_name for t in self.retriever.tools
-                             if t.server_id == agent.agent_id}
-            new_tools = [
+            tool_records = [
                 ToolRecord(
                     tool_name=t.name,
                     server_id=agent.agent_id,
@@ -198,10 +197,8 @@ class ProbePipeline:
                     parameter_schema=t.input_schema,
                 )
                 for t in agent.tools
-                if t.name not in existing_names
             ]
-            if new_tools:
-                self.retriever.add_tools_at_runtime(new_tools)
+            extra_index = self.retriever.build_ephemeral_index(tool_records)
 
         # Build agent context for Stage 2
         agent_description = agent.description
@@ -225,6 +222,7 @@ class ProbePipeline:
                 dag, agent.agent_id, self.retriever, self.llm,
                 agent_description=agent_description,
                 agent_capabilities=agent_capabilities,
+                extra_index=extra_index,
             )
         except Exception as e:
             logger.error("Stage 2 failed for %s: %s", agent.agent_id, e)
