@@ -106,8 +106,12 @@ class ToolRetriever:
         vec = np.array(vec, dtype=np.float32)
         faiss.normalize_L2(vec)
 
-        # Search more than k to allow for post-filtering
-        search_k = min(k * 5, len(self.tools))
+        # When filtering by server, search the full index since the agent's
+        # tools may not be in the global top-k*5 after many agents are indexed
+        if candidate_server_ids:
+            search_k = len(self.tools)
+        else:
+            search_k = min(k * 5, len(self.tools))
         scores, indices = self.index.search(vec, search_k)
 
         results: list[ToolCandidate] = []

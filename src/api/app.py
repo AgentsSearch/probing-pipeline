@@ -11,6 +11,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException
 
 from src.api.schemas import (
@@ -70,20 +71,63 @@ def _build_index(servers_path: str | Path) -> tuple[str, int]:
     return index_dir, len(indexer.tools)
 
 
-def _simulate_execution(plan, agent_id: str) -> list[ProbeExecutionResult]:
-    """Simulate probe execution (placeholder for Stream C integration)."""
+_EXECUTOR_URL = os.environ.get("EXECUTOR_URL", "http://localhost:8001")
+
+
+async def _execute_probes(
+    plan, agent_id: str, remotes: list[dict],
+) -> list[ProbeExecutionResult]:
+    """Send probes to the probe executor at EXECUTOR_URL/execute."""
+    payload = {
+        "agent_id": agent_id,
+        "probes": [
+            {
+                "probe_id": p.probe_id,
+                "targets_subtask": p.targets_subtask,
+                "tool": p.tool,
+                "arguments": p.arguments,
+                "estimated_difficulty": p.estimated_difficulty,
+                "discrimination": p.discrimination,
+                "rubric": [
+                    {"name": r.name, "weight": r.weight, "criteria": r.criteria, "pass_threshold": r.pass_threshold}
+                    for r in p.rubric
+                ],
+                "timeout_seconds": p.timeout_seconds,
+                "priority": p.priority,
+            }
+            for p in plan.probes
+        ],
+        "total_timeout": plan.total_budget_seconds,
+        "remotes": remotes,
+    }
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+        resp = await client.post(f"{_EXECUTOR_URL}/execute", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+
     results = []
-    for probe in plan.probes:
+    for item in data:
+        trajectory = [
+            ActionStep(
+                action=s.get("action", ""),
+                tool_name=s.get("tool_name"),
+                arguments=s.get("arguments"),
+                result=s.get("result"),
+                error=s.get("error"),
+                latency_ms=s.get("latency_ms", 0),
+            )
+            for s in item.get("trajectory", [])
+        ]
         results.append(
             ProbeExecutionResult(
-                agent_id=agent_id,
-                probe_id=probe.probe_id,
-                output={"status": "simulated", "message": f"Simulated result for {probe.tool}"},
-                trajectory=[
-                    ActionStep(action="call_tool", tool_name=probe.tool, result="simulated_ok"),
-                ],
-                latency_ms=150,
-                success=True,
+                agent_id=item["agent_id"],
+                probe_id=item["probe_id"],
+                output=item.get("output"),
+                trajectory=trajectory,
+                latency_ms=item.get("latency_ms", 0),
+                success=item.get("success", False),
+                error_info=item.get("error_info"),
             )
         )
     return results
@@ -196,10 +240,18 @@ async def probe(request: ProbeRequest):
     for result in agent_results:
         agent = result.agent
 
-        # Simulate execution
+        # Execute probes via probe-runner
         exec_results: list[ProbeExecutionResult] = []
         if result.validated_plan and result.validated_plan.probes:
-            exec_results = _simulate_execution(result.validated_plan, agent.agent_id)
+            remotes = [{"type": r.type, "url": r.url} for r in agent.remotes]
+            try:
+                exec_results = await _execute_probes(
+                    result.validated_plan, agent.agent_id, remotes,
+                )
+            except Exception as e:
+                logger.error("Probe execution failed for %s: %s", agent.agent_id, e)
+                result.error_code = "EXECUTION_FAILED"
+                result.error_detail = str(e)
 
         # Score
         ranked = await loop.run_in_executor(
